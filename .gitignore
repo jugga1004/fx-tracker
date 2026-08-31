@@ -1,0 +1,11 @@
+# 검증용으로 잠깐 만드는 번들 (모듈을 한 파일로 합친 것)
+_verify.html
+_smoke.html
+_wkcheck.html
+
+# OS / 편집기
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
+.idea/

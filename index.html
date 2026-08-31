@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+<title>환율 추적기</title>
+<link rel="manifest" href="manifest.json" />
+<meta name="theme-color" content="#1c7ed6" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="환율추적기" />
+<link rel="apple-touch-icon" href="icon.svg" />
+<link rel="icon" href="icon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="app-header">
+    <h1>환율 추적기</h1>
+    <p class="app-header__sub">달러·엔 매수 기록과 과거 데이터 확인용 개인 도구</p>
+
+    <div id="rateCards" class="rate-cards"></div>
+    <div id="dataStatus" class="data-status"></div>
+    <div id="alertBanner" class="alert-banner" hidden></div>
+
+    <div id="tabs" class="mode-tabs" role="tablist">
+      <button type="button" class="mode-tab" data-view="overview" role="tab" aria-selected="true">현황</button>
+      <button type="button" class="mode-tab" data-view="holdings" role="tab" aria-selected="false">내 보유</button>
+      <button type="button" class="mode-tab" data-view="plan" role="tab" aria-selected="false">계획</button>
+      <button type="button" class="mode-tab" data-view="dutyfree" role="tab" aria-selected="false">면세점</button>
+      <button type="button" class="mode-tab" data-view="models" role="tab" aria-selected="false">모델 성적표</button>
+    </div>
+  </header>
+
+  <main>
+    <div id="globalError" class="error-box" hidden></div>
+    <div id="globalLoading" class="loading">환율 데이터를 불러오는 중...</div>
+
+    <!-- ============================= 현황 ============================= -->
+    <section id="view-overview" class="view" hidden>
+      <div class="card">
+        <div class="card__head">
+          <h2>추이</h2>
+          <div class="seg" id="ccyToggle" role="group" aria-label="통화 선택"></div>
+        </div>
+        <div class="seg seg--range" id="rangeToggle" role="group" aria-label="기간 선택">
+          <button type="button" data-months="3">3개월</button>
+          <button type="button" data-months="12" class="is-active">1년</button>
+          <button type="button" data-months="36">3년</button>
+          <button type="button" data-months="60">5년</button>
+          <button type="button" data-months="0">전체</button>
+        </div>
+        <div id="chartBox" class="chart-box"></div>
+        <p class="chart-legend">
+          <span class="key key--line"></span> 환율
+          <span class="key key--ma0"></span> 20일 평균
+          <span class="key key--ma1"></span> 60일 평균
+          <span class="key key--marker"></span> 내 매수
+        </p>
+      </div>
+
+      <div class="card">
+        <h2>지금 환율의 위치</h2>
+        <p class="muted small">과거 분포에서 현재 값이 어디쯤인지 보여줄 뿐, 앞으로의 방향과는 무관합니다.</p>
+        <div id="positionBox"></div>
+      </div>
+
+      <div class="card">
+        <h2>앞으로 얼마나 벌어질 수 있나</h2>
+        <p class="muted small">
+          과거 변동성으로 계산한 확률 구간입니다. 중심이 현재 환율이라는 것 자체가
+          &ldquo;가장 그럴듯한 예측은 오늘 값&rdquo;이라는 뜻이며, 구간의 폭이 방향 예측이
+          왜 어려운지를 보여줍니다.
+        </p>
+        <div id="bandBox"></div>
+      </div>
+
+      <div class="card">
+        <h2>목표 환율 알림</h2>
+        <p class="muted small">
+          앱을 열었을 때만 확인합니다. 백그라운드 알림은 서버가 필요해서 이 도구에서는 지원하지 않습니다.
+        </p>
+        <form id="alertForm" class="form-row">
+          <select id="alertCcy" aria-label="통화"></select>
+          <select id="alertDir" aria-label="조건">
+            <option value="below">이하로 내려가면</option>
+            <option value="above">이상으로 오르면</option>
+          </select>
+          <input id="alertRate" type="number" step="0.01" min="0" placeholder="목표 환율" required />
+          <button type="submit">추가</button>
+        </form>
+        <ul id="alertList" class="plain-list"></ul>
+      </div>
+    </section>
+
+    <!-- =========================== 내 보유 =========================== -->
+    <section id="view-holdings" class="view" hidden>
+      <div id="holdingSummary"></div>
+
+      <div class="card">
+        <h2>매수 기록 추가</h2>
+        <p class="muted small">
+          고시환율이 아니라 <strong>실제로 낸 원화</strong>와 <strong>실제로 받은 외화</strong>를 적으세요.
+          그래야 스프레드와 수수료가 자동으로 평균단가에 반영됩니다.
+        </p>
+        <form id="buyForm" class="form-grid">
+          <label>날짜<input id="buyDate" type="date" required /></label>
+          <label>통화<select id="buyCcy"></select></label>
+          <label>지불한 원화<input id="buyKrw" type="number" step="1" min="0" placeholder="1000000" required /></label>
+          <label>받은 외화<input id="buyForeign" type="number" step="0.01" min="0" placeholder="730.5" required /></label>
+          <label class="span2">메모 (선택)<input id="buyMemo" type="text" placeholder="OO은행 앱 환전" /></label>
+          <div class="span2 form-actions">
+            <span id="buyPreview" class="muted small"></span>
+            <button type="submit">추가</button>
+          </div>
+        </form>
+        <div id="buyError" class="error-box" hidden></div>
+      </div>
+
+      <div class="card">
+        <h2>매수 내역</h2>
+        <div id="buyList"></div>
+      </div>
+
+      <div class="card">
+        <h2>국내 고시환율</h2>
+        <p class="muted small">
+          차트·통계는 ECB 시계열을 쓰지만, 금액 계산(평가손익·환전 비용·면세점 프리미엄)은
+          <strong>한국수출입은행 매매기준율</strong>을 씁니다. 두 값은 <strong>0.4% 안팎 차이</strong>가 납니다.
+          매매기준율은 GitHub Actions가 매 영업일 받아 저장소에 커밋해두고, 앱은 그 파일을 읽습니다.
+          <strong>인증키는 GitHub Secrets에만 있고 이 앱에는 들어오지 않습니다.</strong>
+        </p>
+        <form id="ratesForm" class="form-row">
+          <label class="grow"><span>환율 파일 주소 (비우면 기본값)</span><input id="ratesUrl" type="text" /></label>
+          <button type="submit">저장</button>
+          <button type="button" id="ratesReload" class="ghost">다시 받기</button>
+        </form>
+        <div id="ratesStatus" class="muted small mt"></div>
+      </div>
+
+      <div class="card">
+        <h2>환전 조건 설정</h2>
+        <p class="muted small">
+          평가손익을 정확히 내려면 <strong>팔 때 물어야 할 스프레드</strong>가 필요합니다.
+          기본값은 현찰 기준 1.75%이며, 본인 거래 은행 조건으로 바꿔주세요.
+        </p>
+        <div id="spreadSettings" class="form-grid"></div>
+      </div>
+
+      <div class="card">
+        <h2>데이터 백업</h2>
+        <p class="muted small">
+          기록은 이 브라우저에만 저장됩니다. 브라우저 데이터를 지우면 사라지니 가끔 내보내 두세요.
+        </p>
+        <div class="form-actions form-actions--left">
+          <button type="button" id="exportBtn">내보내기 (JSON)</button>
+          <label class="file-btn">가져오기<input type="file" id="importInput" accept="application/json,.json" hidden /></label>
+          <button type="button" id="resetBtn" class="danger">전체 삭제</button>
+        </div>
+        <div id="backupMsg" class="muted small"></div>
+      </div>
+    </section>
+
+    <!-- ============================= 계획 ============================= -->
+    <section id="view-plan" class="view" hidden>
+      <div class="card">
+        <h2>분할매수 vs 일시불 — 과거엔 어땠나</h2>
+        <p class="muted small">
+          실제 환율 데이터로 두 방식의 최종 평균단가를 계산합니다. 매수자에게는 평균단가가 낮을수록 유리합니다.
+          <strong>과거 특정 구간의 결과일 뿐 앞으로를 보장하지 않습니다.</strong>
+        </p>
+        <div class="seg seg--range" id="dcaRange" role="group">
+          <button type="button" data-months="12">1년</button>
+          <button type="button" data-months="36" class="is-active">3년</button>
+          <button type="button" data-months="60">5년</button>
+          <button type="button" data-months="120">10년</button>
+        </div>
+        <div id="dcaCompare"></div>
+      </div>
+
+      <div class="card">
+        <h2>분할매수 계획 세우기</h2>
+        <form id="planForm" class="form-grid">
+          <label>통화<select id="planCcy"></select></label>
+          <label>총 매수 금액 (원)<input id="planTotal" type="number" step="10000" min="0" placeholder="12000000" required /></label>
+          <label>분할 횟수<input id="planCount" type="number" step="1" min="2" placeholder="12" required /></label>
+          <label>주기<select id="planPeriod"><option value="month">매월</option><option value="week">매주</option></select></label>
+          <label>시작일<input id="planStart" type="date" required /></label>
+          <div class="span2 form-actions">
+            <span id="planPreview" class="muted small"></span>
+            <button type="submit">계획 추가</button>
+          </div>
+        </form>
+        <div id="planError" class="error-box" hidden></div>
+      </div>
+
+      <div class="card">
+        <h2>진행 중인 계획</h2>
+        <div id="planList"></div>
+      </div>
+    </section>
+
+    <!-- ============================ 면세점 ============================ -->
+    <section id="view-dutyfree" class="view" hidden>
+      <div class="card card--warn">
+        <h2>면세점 적용환율은 자동으로 가져올 수 없습니다</h2>
+        <p>
+          면세점 적용환율은 롯데·신라·신세계 등이 <strong>각자 정해 자사 사이트에만 공지</strong>합니다.
+          공개 API가 없고 브라우저에서 다른 사이트를 직접 읽는 것도 막혀 있어, 이 도구가 대신 조회할 방법이 없습니다.
+        </p>
+        <ul class="tight">
+          <li>서울외국환중개(smbs.biz)는 기간 조회에 <strong>로그인이 필요하고</strong> 당일 화면의 숫자도 HTML에 들어 있지 않아 스크래핑이 불가능합니다.</li>
+          <li>관세청 주간환율 API는 인증키가 필요하고 브라우저에서 호출할 수 없으며, 애초에 수입 통관용 <strong>과세환율</strong>이라 면세점 적용환율과 다른 값입니다.</li>
+        </ul>
+        <p class="mt">
+          대신 아래 두 가지를 제공합니다 — <strong>전일 매매기준율 기반 예상치</strong>(프록시 연결 시)와,
+          <strong>직접 확인한 환율 기록</strong>을 같은 날 시장환율과 비교한 프리미엄입니다.
+        </p>
+        <div id="dutyFreeLinks" class="shop-links"></div>
+      </div>
+
+      <div id="dutyFreeEstimate"></div>
+      <div id="dutyFreeSummary"></div>
+
+      <div class="card">
+        <h2>적용환율 기록 추가</h2>
+        <form id="dfForm" class="form-grid">
+          <label>확인한 날짜<input id="dfDate" type="date" required /></label>
+          <label>통화<select id="dfCcy"></select></label>
+          <label>면세점<select id="dfShop"></select></label>
+          <label id="dfShopNameWrap" hidden>면세점 이름<input id="dfShopName" type="text" placeholder="예: 공항 출국장 면세점" /></label>
+          <!-- 라벨 텍스트를 span으로 감싼다. label이 flex-column이라 텍스트 노드와 inline span이
+               각각 별도 플렉스 아이템이 되어 세 줄로 쪼개지기 때문. -->
+          <label class="span2"><span>적용환율 (<span id="dfUnitLabel">1달러</span>당 원)</span><input id="dfRate" type="number" step="0.01" min="0" placeholder="1390" required /></label>
+          <label class="span2">메모 (선택)<input id="dfMemo" type="text" placeholder="이번 주 적용분" /></label>
+          <div class="span2 form-actions">
+            <span id="dfPreview" class="muted small"></span>
+            <button type="submit">기록</button>
+          </div>
+        </form>
+        <div id="dfError" class="error-box" hidden></div>
+      </div>
+
+      <div class="card">
+        <h2>상품가 환산 계산기</h2>
+        <p class="muted small">
+          면세점 표시가를 원화로 환산하고, 같은 금액을 시장환율로 계산했을 때와 비교합니다.
+        </p>
+        <form id="dfCalcForm" class="form-row">
+          <label class="grow">상품 가격<input id="dfCalcPrice" type="number" step="0.01" min="0" placeholder="250" /></label>
+          <label class="grow">적용환율<input id="dfCalcRate" type="number" step="0.01" min="0" placeholder="1390" /></label>
+        </form>
+        <div id="dfCalcResult"></div>
+        <p class="note mt">
+          해외 카드 결제 시 <strong>원화(KRW)로 결제</strong>하면 DCC(자국통화결제) 수수료가 별도로 붙습니다.
+          현지 통화로 결제하는 쪽이 일반적으로 비용이 적습니다.
+        </p>
+      </div>
+
+      <div class="card">
+        <h2>기록 이력</h2>
+        <div id="dfList"></div>
+      </div>
+    </section>
+
+    <!-- ========================== 모델 성적표 ========================== -->
+    <section id="view-models" class="view" hidden>
+      <div class="card card--warn">
+        <h2>먼저 읽어주세요</h2>
+        <p>
+          단기 환율 예측은 <strong>Meese &amp; Rogoff(1983)</strong> 이후 40년 넘게
+          랜덤워크(&ldquo;내일도 오늘과 같다&rdquo;)를 안정적으로 이기는 모델이 나오지 않은 영역입니다.
+          아래 모델들은 맞히라고 넣은 게 아니라 <strong>실제로 못 맞힌다는 걸 이 데이터로 직접 확인하시라고</strong> 넣었습니다.
+        </p>
+        <ul class="tight">
+          <li><strong>Theil&rsquo;s U</strong> = 모델 오차 ÷ 랜덤워크 오차. <strong>1보다 크면 아무것도 안 하느니만 못한 것</strong>입니다.</li>
+          <li><strong>방향 적중률</strong>의 95% 신뢰구간에 50%가 들어 있으면, 그 모델은 동전 던지기와 구분되지 않습니다.</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card__head">
+          <h2>현재 시점 예측값</h2>
+          <div class="seg" id="modelCcyToggle" role="group" aria-label="통화 선택"></div>
+        </div>
+        <div id="predictBox"></div>
+      </div>
+
+      <div class="card">
+        <h2>walk-forward 백테스트 성적</h2>
+        <p class="muted small" id="backtestMeta"></p>
+        <div id="backtestBox"></div>
+        <p class="muted small">
+          각 시점에서 <strong>그 시점까지의 데이터만</strong> 보고 예측한 뒤 실제값과 비교했습니다(미래 참조 없음).
+          다만 예측 구간이 서로 겹치므로 관측치가 완전히 독립적이지 않고, 그만큼 위 신뢰구간은
+          실제보다 좁게 나옵니다 — 즉 &ldquo;의미 있음&rdquo; 판정은 보수적으로 읽으셔야 합니다.
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <p id="footerSource"></p>
+    <p>
+      이 도구는 데이터 표시와 사용자가 입력한 기록의 계산만 합니다.
+      <strong>매수·매도 시점을 추천하지 않습니다.</strong>
+      투자 판단과 세무 처리는 전문가 확인을 권장합니다.
+    </p>
+    <p>
+      환율은 ECB 공시 기준이라 서울외국환중개 매매기준율·은행 고시환율과 다르며,
+      주말과 유럽 공휴일에는 데이터가 없습니다. 실제 거래 전 거래 은행의 고시환율을 반드시 확인하세요.
+    </p>
+  </footer>
+
+  <script src="fx-data.js"></script>
+  <script src="fx-stats.js"></script>
+  <script src="fx-models.js"></script>
+  <script src="portfolio.js"></script>
+  <script src="fx-domestic.js"></script>
+  <script src="chart.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

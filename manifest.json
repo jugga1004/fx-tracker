@@ -1,0 +1,14 @@
+{
+  "name": "환율 추적기",
+  "short_name": "환율추적기",
+  "description": "달러·엔 매수 기록과 과거 환율 데이터를 확인하는 개인용 도구",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f7f7f8",
+  "theme_color": "#1c7ed6",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

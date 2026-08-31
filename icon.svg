@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
+  <rect width="192" height="192" rx="40" fill="#1c7ed6" />
+  <polyline
+    points="30,128 60,96 84,112 114,64 138,84 164,50"
+    fill="none"
+    stroke="#ffffff"
+    stroke-width="11"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    opacity="0.95"
+  />
+  <circle cx="60" cy="96" r="7" fill="#ffd43b" />
+  <circle cx="114" cy="64" r="7" fill="#ffd43b" />
+  <text
+    x="96"
+    y="172"
+    font-family="-apple-system, BlinkMacSystemFont, 'Malgun Gothic', sans-serif"
+    font-size="30"
+    font-weight="700"
+    fill="#ffffff"
+    text-anchor="middle"
+  >₩ $ ¥</text>
+</svg>

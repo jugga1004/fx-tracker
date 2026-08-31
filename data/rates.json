@@ -1,0 +1,9 @@
+{
+ "source": "한국수출입은행 오픈API 매매기준율(deal_bas_r)",
+ "note": "USD는 1달러, JPY는 100엔 기준. 영업일만 존재하며 주말·공휴일은 없음. GitHub Actions의 「환율 갱신」이 채웁니다.",
+ "updatedAt": null,
+ "latest": null,
+ "count": 0,
+ "missing": [],
+ "rates": {}
+}

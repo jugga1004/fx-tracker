@@ -1,0 +1,63 @@
+name: 환율 갱신
+
+# 한국수출입은행 매매기준율을 받아 data/rates.json에 커밋한다.
+# GitHub Pages는 정적 호스팅이라 서버 코드를 못 돌리므로, 요청 시점에 조회하는 대신
+# 여기서 미리 받아두고 앱은 그 파일 하나만 읽는다.
+#
+# 필요한 것: 저장소 Settings → Secrets and variables → Actions → New repository secret
+#            이름 KOREAEXIM_KEY, 값은 한국수출입은행 오픈API 인증키
+
+on:
+  schedule:
+    # 매일 03:30 UTC = 12:30 KST. 수출입은행이 영업일 11시 전후에 갱신하므로 그 뒤에 돈다.
+    # (GitHub Actions 크론은 지연될 수 있지만, 스크립트가 최근 10일 중 빠진 날짜를
+    #  모두 확인하므로 한두 번 밀려도 빈 날짜가 생기지 않는다.)
+    - cron: "30 3 * * 1-5"
+
+  # 과거 구간을 메우거나 즉시 갱신할 때 수동 실행.
+  workflow_dispatch:
+    inputs:
+      from:
+        description: "시작일 (YYYY-MM-DD). 비우면 최근 10일만 확인"
+        required: false
+        type: string
+      to:
+        description: "종료일 (YYYY-MM-DD). 비우면 오늘"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-rates
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 환율 수집
+        env:
+          KOREAEXIM_KEY: ${{ secrets.KOREAEXIM_KEY }}
+          FROM: ${{ inputs.from }}
+          TO: ${{ inputs.to }}
+        run: node scripts/fetch-rates.mjs
+
+      - name: 변경분 커밋
+        run: |
+          if git diff --quiet -- data/rates.json; then
+            echo "변경 없음 — 커밋 생략"
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/rates.json
+          git commit -m "환율 갱신: $(node -e "const d=require('./data/rates.json');console.log(d.latest+' 기준 '+d.count+'일치')")"
+          git push
