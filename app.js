@@ -1280,6 +1280,8 @@
     }
 
     var today = FxData.todayISO();
+    var yesterday = FxData.shiftDays(today, -1);
+    var yesterdayApplied = FxDomestic.appliedOn("USD", yesterday);
     var todayApplied = FxDomestic.appliedOn("USD", today);
     var tomorrowApplied = FxDomestic.appliedTomorrow("USD");
 
@@ -1292,17 +1294,32 @@
     }
 
     var diff = tomorrowApplied ? tomorrowApplied.rate - todayApplied.rate : NaN;
+    var diffYd = yesterdayApplied ? todayApplied.rate - yesterdayApplied.rate : NaN;
 
     box.innerHTML =
       '<div class="card">' +
       '<div class="card__head"><h2>적용환율 (미국 달러)</h2>' +
       '<span class="muted small">전일 고시 매매기준율 기준</span></div>' +
-      '<div class="stat-grid stat-grid--2">' +
-      stat("오늘 " + dfDayLabel(today), rate(todayApplied.rate) + "원", todayApplied.quoteDate + " 고시분") +
+      '<div class="stat-grid stat-grid--3">' +
+      // 라벨은 어제/오늘/내일만 두고 날짜는 아래 작은 줄로 내린다.
+      // 좁은 화면에서도 세 칸이 한 줄에 들어가야 비교가 된다.
       stat(
-        "내일 " + dfDayLabel(FxData.shiftDays(today, 1)),
+        "어제",
+        yesterdayApplied ? rate(yesterdayApplied.rate) + "원" : "—",
+        dfDayLabel(yesterday) + (yesterdayApplied ? "<br />" + yesterdayApplied.quoteDate.slice(5) + " 고시" : "")
+      ) +
+      stat(
+        "오늘",
+        rate(todayApplied.rate) + "원",
+        dfDayLabel(today) + "<br />" + todayApplied.quoteDate.slice(5) + " 고시",
+        isFinite(diffYd) ? (diffYd > 0 ? "neg" : diffYd < 0 ? "pos" : "") : ""
+      ) +
+      stat(
+        "내일",
         tomorrowApplied ? rate(tomorrowApplied.rate) + "원" : "미정",
-        tomorrowApplied ? tomorrowApplied.quoteDate + " 고시분" : "오늘 고시(11시경) 후 확정",
+        dfDayLabel(FxData.shiftDays(today, 1)) +
+          "<br />" +
+          (tomorrowApplied ? tomorrowApplied.quoteDate.slice(5) + " 고시" : "오늘 고시 후 확정"),
         isFinite(diff) ? (diff > 0 ? "neg" : diff < 0 ? "pos" : "") : ""
       ) +
       "</div>" +

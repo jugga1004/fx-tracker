@@ -369,6 +369,10 @@ code {
   grid-template-columns: repeat(2, 1fr);
 }
 
+.stat-grid--3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+
 .stat {
   background: var(--color-bg);
   border-radius: 8px;
@@ -458,29 +462,6 @@ ul.tight li {
 .form-row label.grow {
   flex: 1;
   min-width: 140px;
-}
-
-/* 면세점 공식 사이트 바로가기 */
-.shop-links {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 10px;
-}
-
-.shop-links a {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: 999px;
-  padding: 5px 12px;
-  font-size: 0.8rem;
-  color: var(--color-primary-dark);
-  text-decoration: none;
-  font-weight: 600;
-}
-
-.shop-links a:hover {
-  border-color: var(--color-primary);
 }
 
 input,
@@ -717,6 +698,20 @@ button.danger {
 @media (max-width: 560px) {
   .stat-grid {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  /* 어제·오늘·내일은 나란히 놓여야 비교가 되므로 좁은 화면에서도 3칸을 유지한다. */
+  .stat-grid--3 {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+  }
+
+  .stat-grid--3 .stat {
+    padding: 8px 7px;
+  }
+
+  .stat-grid--3 .stat__value {
+    font-size: 0.88rem;
   }
 
   .form-grid {

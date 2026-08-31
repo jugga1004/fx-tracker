@@ -27,7 +27,7 @@
       <button type="button" class="mode-tab" data-view="overview" role="tab" aria-selected="true">현황</button>
       <button type="button" class="mode-tab" data-view="holdings" role="tab" aria-selected="false">내 보유</button>
       <button type="button" class="mode-tab" data-view="plan" role="tab" aria-selected="false">계획</button>
-      <button type="button" class="mode-tab" data-view="dutyfree" role="tab" aria-selected="false">면세점</button>
+      <button type="button" class="mode-tab" data-view="dutyfree" role="tab" aria-selected="false">면세점환율</button>
       <button type="button" class="mode-tab" data-view="models" role="tab" aria-selected="false">모델 성적표</button>
     </div>
   </header>
@@ -202,25 +202,6 @@
 
     <!-- ============================ 면세점 ============================ -->
     <section id="view-dutyfree" class="view" hidden>
-      <div class="card card--warn">
-        <h2>이 숫자는 추정치입니다</h2>
-        <p>
-          면세점은 <strong>전일 고시 매매기준율</strong>을 적용한다는 것이 업계에서 통용되는 설명입니다.
-          아래 값은 그 규칙에 따라 한국수출입은행 매매기준율로 계산한 것이며, 면세점이 공식 고지한 값을 가져온 게 아닙니다.
-        </p>
-        <ul class="tight">
-          <li>적용환율의 원천은 <strong>서울외국환중개</strong> 고시이고 여기 값은 <strong>한국수출입은행</strong> 고시라, 소수점까지 같다는 보장은 없습니다.</li>
-          <li>면세점·시점마다 관행이 다를 수 있습니다. <strong>실제 구매 전 면세점에서 확인하세요.</strong></li>
-          <li>국내 면세점 표시가는 달러 기준이라 미국 달러만 계산합니다.</li>
-        </ul>
-        <div class="shop-links">
-          <a href="https://kor.lottedfs.com/" target="_blank" rel="noopener noreferrer">롯데면세점 ↗</a>
-          <a href="https://www.shilladfs.com/" target="_blank" rel="noopener noreferrer">신라면세점 ↗</a>
-          <a href="https://www.ssgdfs.com/" target="_blank" rel="noopener noreferrer">신세계면세점 ↗</a>
-          <a href="https://www.hddfs.com/" target="_blank" rel="noopener noreferrer">현대면세점 ↗</a>
-        </div>
-      </div>
-
       <div id="dutyFreeEstimate"></div>
       <div id="dutyFreeWeek"></div>
 
