@@ -668,6 +668,18 @@ button.danger {
   border: 1px solid #f2d9a8;
 }
 
+.badge--info {
+  background: #e7f2fd;
+  color: var(--color-primary-dark);
+  border: 1px solid #c5dff8;
+}
+
+/* 표에서 '내일 적용분'처럼 강조할 행 */
+.data-table tr.row-hi > th,
+.data-table tr.row-hi > td {
+  background: #f2f8ff;
+}
+
 /* ------------------------------------------------------- 상태 메시지/푸터 */
 
 .error-box {

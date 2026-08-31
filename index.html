@@ -203,63 +203,43 @@
     <!-- ============================ 면세점 ============================ -->
     <section id="view-dutyfree" class="view" hidden>
       <div class="card card--warn">
-        <h2>면세점 적용환율은 자동으로 가져올 수 없습니다</h2>
+        <h2>이 숫자는 추정치입니다</h2>
         <p>
-          면세점 적용환율은 롯데·신라·신세계 등이 <strong>각자 정해 자사 사이트에만 공지</strong>합니다.
-          공개 API가 없고 브라우저에서 다른 사이트를 직접 읽는 것도 막혀 있어, 이 도구가 대신 조회할 방법이 없습니다.
+          면세점은 <strong>전일 고시 매매기준율</strong>을 적용한다는 것이 업계에서 통용되는 설명입니다.
+          아래 값은 그 규칙에 따라 한국수출입은행 매매기준율로 계산한 것이며, 면세점이 공식 고지한 값을 가져온 게 아닙니다.
         </p>
         <ul class="tight">
-          <li>서울외국환중개(smbs.biz)는 기간 조회에 <strong>로그인이 필요하고</strong> 당일 화면의 숫자도 HTML에 들어 있지 않아 스크래핑이 불가능합니다.</li>
-          <li>관세청 주간환율 API는 인증키가 필요하고 브라우저에서 호출할 수 없으며, 애초에 수입 통관용 <strong>과세환율</strong>이라 면세점 적용환율과 다른 값입니다.</li>
+          <li>적용환율의 원천은 <strong>서울외국환중개</strong> 고시이고 여기 값은 <strong>한국수출입은행</strong> 고시라, 소수점까지 같다는 보장은 없습니다.</li>
+          <li>면세점·시점마다 관행이 다를 수 있습니다. <strong>실제 구매 전 면세점에서 확인하세요.</strong></li>
+          <li>국내 면세점 표시가는 달러 기준이라 미국 달러만 계산합니다.</li>
         </ul>
-        <p class="mt">
-          대신 아래 두 가지를 제공합니다 — <strong>전일 매매기준율 기반 예상치</strong>(프록시 연결 시)와,
-          <strong>직접 확인한 환율 기록</strong>을 같은 날 시장환율과 비교한 프리미엄입니다.
-        </p>
-        <div id="dutyFreeLinks" class="shop-links"></div>
+        <div class="shop-links">
+          <a href="https://kor.lottedfs.com/" target="_blank" rel="noopener noreferrer">롯데면세점 ↗</a>
+          <a href="https://www.shilladfs.com/" target="_blank" rel="noopener noreferrer">신라면세점 ↗</a>
+          <a href="https://www.ssgdfs.com/" target="_blank" rel="noopener noreferrer">신세계면세점 ↗</a>
+          <a href="https://www.hddfs.com/" target="_blank" rel="noopener noreferrer">현대면세점 ↗</a>
+        </div>
       </div>
 
       <div id="dutyFreeEstimate"></div>
-      <div id="dutyFreeSummary"></div>
-
-      <div class="card">
-        <h2>적용환율 기록 추가</h2>
-        <form id="dfForm" class="form-grid">
-          <label>확인한 날짜<input id="dfDate" type="date" required /></label>
-          <label>통화<select id="dfCcy"></select></label>
-          <label>면세점<select id="dfShop"></select></label>
-          <label id="dfShopNameWrap" hidden>면세점 이름<input id="dfShopName" type="text" placeholder="예: 공항 출국장 면세점" /></label>
-          <!-- 라벨 텍스트를 span으로 감싼다. label이 flex-column이라 텍스트 노드와 inline span이
-               각각 별도 플렉스 아이템이 되어 세 줄로 쪼개지기 때문. -->
-          <label class="span2"><span>적용환율 (<span id="dfUnitLabel">1달러</span>당 원)</span><input id="dfRate" type="number" step="0.01" min="0" placeholder="1390" required /></label>
-          <label class="span2">메모 (선택)<input id="dfMemo" type="text" placeholder="이번 주 적용분" /></label>
-          <div class="span2 form-actions">
-            <span id="dfPreview" class="muted small"></span>
-            <button type="submit">기록</button>
-          </div>
-        </form>
-        <div id="dfError" class="error-box" hidden></div>
-      </div>
+      <div id="dutyFreeWeek"></div>
 
       <div class="card">
         <h2>상품가 환산 계산기</h2>
         <p class="muted small">
-          면세점 표시가를 원화로 환산하고, 같은 금액을 시장환율로 계산했을 때와 비교합니다.
+          면세점 달러 표시가를 원화로 환산합니다. 환율 칸은 오늘 적용환율이 기본으로 들어가며 직접 고칠 수 있습니다.
         </p>
         <form id="dfCalcForm" class="form-row">
-          <label class="grow">상품 가격<input id="dfCalcPrice" type="number" step="0.01" min="0" placeholder="250" /></label>
-          <label class="grow">적용환율<input id="dfCalcRate" type="number" step="0.01" min="0" placeholder="1390" /></label>
+          <label class="grow"><span>상품 가격 (달러)</span><input id="dfCalcPrice" type="number" step="0.01" min="0" placeholder="250" /></label>
+          <label class="grow"><span>적용환율 (1달러당 원)</span><input id="dfCalcRate" type="number" step="0.01" min="0" placeholder="1376.5" /></label>
         </form>
         <div id="dfCalcResult"></div>
         <p class="note mt">
-          해외 카드 결제 시 <strong>원화(KRW)로 결제</strong>하면 DCC(자국통화결제) 수수료가 별도로 붙습니다.
-          현지 통화로 결제하는 쪽이 일반적으로 비용이 적습니다.
+          <strong>적용환율과 환전 환율은 다릅니다.</strong> 적용환율은 표시가를 원화로 바꾸는 환산율이라
+          매매기준율 그대로이고 스프레드가 없습니다. 반면 은행에서 달러를 사면 매매기준율에 스프레드(현찰 통상 +1.75%)가 붙습니다.
+          그래서 현찰을 환전해 쓰는 것보다 원화로 결제하는 쪽이 유리한 경우가 많습니다.
+          다만 카드 결제는 카드사 환율과 수수료가 따로 붙으니 결제 수단별 조건은 확인이 필요합니다.
         </p>
-      </div>
-
-      <div class="card">
-        <h2>기록 이력</h2>
-        <div id="dfList"></div>
       </div>
     </section>
 

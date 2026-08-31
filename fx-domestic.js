@@ -195,6 +195,49 @@
     return load().latestDate;
   }
 
+  function sortedDates() {
+    return Object.keys(load().byDate).sort();
+  }
+
+  // ---------------------------------------------------------------------
+  // 면세점 적용환율
+  // ---------------------------------------------------------------------
+  // 면세점은 '전일 고시 매매기준율'을 적용한다. 그래서 어떤 날짜 D의 적용환율은
+  // D보다 앞선 가장 최근 고시분이다. 주말·공휴일에는 고시가 없으므로 직전 영업일
+  // 값이 그대로 이어진다 (예: 토·일·월 모두 금요일 고시분).
+  //
+  // 반환: { appliedDate, quoteDate, rate } — 데이터가 모자라면 null
+  function appliedOn(code, iso) {
+    var dates = sortedDates();
+    for (var i = dates.length - 1; i >= 0; i--) {
+      if (dates[i] >= iso) continue; // 당일 고시는 '내일' 적용분이라 여기서 제외
+      var v = get(code, dates[i]);
+      if (v !== null) return { appliedDate: iso, quoteDate: dates[i], rate: v };
+    }
+    return null;
+  }
+
+  // 오늘을 포함한 최근 days일치 적용환율 (과거 → 오늘 순).
+  function appliedSeries(code, days) {
+    var out = [];
+    var today = global.FxData.todayISO();
+    for (var i = days - 1; i >= 0; i--) {
+      var r = appliedOn(code, global.FxData.shiftDays(today, -i));
+      if (r) out.push(r);
+    }
+    return out;
+  }
+
+  // 내일 적용분은 '오늘 고시'가 나와야 확정된다(영업일 11시 전후).
+  // 아직 안 나왔으면 null — 이걸 오늘 값으로 때우면 안 된다.
+  function appliedTomorrow(code) {
+    var today = global.FxData.todayISO();
+    if (latestDate() !== today) return null;
+    var v = get(code, today);
+    if (v === null) return null;
+    return { appliedDate: global.FxData.shiftDays(today, 1), quoteDate: today, rate: v };
+  }
+
   function updatedAt() {
     return load().updatedAt;
   }
@@ -221,6 +264,9 @@
     latest: latest,
     latestDate: latestDate,
     updatedAt: updatedAt,
+    appliedOn: appliedOn,
+    appliedSeries: appliedSeries,
+    appliedTomorrow: appliedTomorrow,
     count: count,
     clear: clear,
     SOURCE_LABEL: "한국수출입은행 매매기준율",

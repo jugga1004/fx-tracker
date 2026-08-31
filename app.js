@@ -185,7 +185,7 @@
     var today = FxData.todayISO();
     $("buyDate").value = today;
     $("planStart").value = today;
-    $("dfDate").value = today;
+
 
     FxData.loadAll()
       .then(function (map) {
@@ -259,7 +259,7 @@
         return '<option value="' + c + '">' + esc(FxData.CURRENCIES[c].label) + "</option>";
       })
       .join("");
-    ["buyCcy", "planCcy", "alertCcy", "dfCcy"].forEach(function (id) {
+    ["buyCcy", "planCcy", "alertCcy"].forEach(function (id) {
       $(id).innerHTML = optsHtml;
     });
 
@@ -1233,63 +1233,16 @@
   // ---------------------------------------------------------------------
   // 면세점 탭
   // ---------------------------------------------------------------------
-  // 적용환율은 자동 조회가 불가능해서(사유는 portfolio.js 주석 참고) 사용자가 직접
-  // 기록한다. 대신 기록만 해두면 그날 시장환율과 비교한 프리미엄이 자동으로 붙는다.
+  // 적용환율은 매매기준율에서 그대로 유도되므로(전일 고시분) 사용자가 직접 적을 게 없다.
+  // 면세점별로 다르게 다루지도 않는다 — 표시가가 달러 기준이라 USD 하나만 본다.
+
+  var DF_WEEK_DAYS = 7;
+  var WEEKDAY_KO = ["일", "월", "화", "수", "목", "금", "토"];
+  var dfCalcRateTouched = false;
 
   function wireDutyFree() {
-    $("dfShop").innerHTML = Portfolio.DUTY_FREE_SHOPS.map(function (s) {
-      return '<option value="' + s.key + '">' + esc(s.label) + "</option>";
-    }).join("");
-
-    $("dfShop").addEventListener("change", function () {
-      $("dfShopNameWrap").hidden = $("dfShop").value !== "etc";
-    });
-
-    $("dfCcy").addEventListener("change", function () {
-      $("dfUnitLabel").textContent = FxData.CURRENCIES[$("dfCcy").value].unitLabel;
-      // 통화가 바뀌면 계산기 환율(달러 1,374원 vs 100엔 861원)이 완전히 달라지므로 기본값을 다시 잡는다.
-      dfCalcRateTouched = false;
-      $("dfCalcRate").value = "";
-      updateDfPreview();
-      renderDutyFree();
-    });
-
-    $("dfDate").addEventListener("change", updateDfPreview);
-    $("dfRate").addEventListener("input", updateDfPreview);
-
-    $("dfForm").addEventListener("submit", function (e) {
-      e.preventDefault();
-      var box = $("dfError");
-      box.hidden = true;
-      try {
-        Portfolio.addDutyFree({
-          date: $("dfDate").value,
-          code: $("dfCcy").value,
-          shop: $("dfShop").value,
-          shopName: $("dfShopName").value,
-          rate: $("dfRate").value,
-          memo: $("dfMemo").value,
-        });
-        $("dfRate").value = "";
-        $("dfMemo").value = "";
-        updateDfPreview();
-        renderDutyFree();
-      } catch (err) {
-        box.textContent = err.message;
-        box.hidden = false;
-      }
-    });
-
-    $("dfList").addEventListener("click", function (e) {
-      var btn = e.target.closest("button[data-del]");
-      if (!btn) return;
-      if (!confirm("이 기록을 삭제할까요?")) return;
-      Portfolio.removeDutyFree(btn.dataset.del);
-      renderDutyFree();
-    });
-
     $("dfCalcPrice").addEventListener("input", renderDfCalc);
-    // 사용자가 환율 칸을 직접 건드렸으면 그 값을 존중하고, 아니면 최신 기록으로 계속 갱신한다.
+    // 사용자가 환율 칸을 직접 건드렸으면 그 값을 존중하고, 아니면 오늘 적용환율을 따라간다.
     $("dfCalcRate").addEventListener("input", function () {
       dfCalcRateTouched = true;
       renderDfCalc();
@@ -1299,96 +1252,57 @@
     });
   }
 
-  // 계산기 환율 칸을 사용자가 손댔는지 여부. 손대지 않았다면 기록을 추가할 때마다
-  // 최신 적용환율로 따라가야 한다(안 그러면 처음 채워진 시장환율에 그대로 머문다).
-  var dfCalcRateTouched = false;
-
-  // 입력 중인 환율이 그날 시장환율보다 얼마나 높은지 즉시 보여준다.
-  function updateDfPreview() {
-    var code = $("dfCcy").value;
-    var s = ratesSeries(code);
-    var r = Number($("dfRate").value);
-    var date = $("dfDate").value;
-    if (!(r > 0) || !s || !s.rows || !s.rows.length || !date) {
-      $("dfPreview").textContent = "";
-      return;
-    }
-    var mkt = FxData.rateOn(s.rows, date);
-    if (!mkt) {
-      $("dfPreview").textContent = "";
-      return;
-    }
-    var prem = ((r - mkt.rate) / mkt.rate) * 100;
-    $("dfPreview").textContent =
-      esc(mkt.date) + " 시장환율 " + rate(mkt.rate) + "원 대비 " + signedPct(prem);
-  }
-
   function renderDutyFree() {
-    $("dfShopNameWrap").hidden = $("dfShop").value !== "etc";
-    $("dfUnitLabel").textContent = FxData.CURRENCIES[$("dfCcy").value].unitLabel;
-
-    $("dutyFreeLinks").innerHTML = Portfolio.DUTY_FREE_SHOPS.filter(function (s) {
-      return s.url;
-    })
-      .map(function (s) {
-        return '<a href="' + esc(s.url) + '" target="_blank" rel="noopener noreferrer">' + esc(s.label) + " ↗</a>";
-      })
-      .join("");
-
     renderDfEstimate();
-    renderDfSummary();
-    renderDfList();
+    renderDfWeek();
     renderDfCalc();
   }
 
+  function dfDayLabel(iso) {
+    return iso.slice(5) + " (" + WEEKDAY_KO[FxData.parseISO(iso).getDay()] + ")";
+  }
+
   // ---------------------------------------------------------------------
-  // 면세점 예상 적용환율 = 직전 영업일 매매기준율
+  // 오늘 / 내일 적용환율
   // ---------------------------------------------------------------------
-  // 면세점은 전일 고시 매매기준율을 적용한다는 게 업계에서 통용되는 설명이다.
-  // 국내 매매기준율이 붙어야 계산할 수 있으므로 프록시가 없으면 안내만 띄운다.
-  // 국내 면세점 표시가는 달러 기준이라 USD만 계산한다.
   function renderDfEstimate() {
     var box = $("dutyFreeEstimate");
     if (!box) return;
 
     if (!FxDomestic.available()) {
       box.innerHTML =
-        '<div class="card"><h2>예상 적용환율</h2><p class="muted small">' +
+        '<div class="card"><h2>적용환율</h2><p class="muted small">' +
         "국내 매매기준율이 있어야 계산할 수 있습니다. GitHub Actions의 「환율 갱신」이 한 번 실행되면 " +
-        "<strong>직전 영업일 매매기준율</strong>로 오늘·내일 면세점 적용환율을 추정해 보여드립니다. " +
+        "<strong>직전 영업일 매매기준율</strong>로 오늘·내일 적용환율을 계산해 보여드립니다. " +
         "(상태는 「내 보유 → 국내 고시환율」에서 확인할 수 있습니다)" +
         "</p></div>";
       return;
     }
 
-    var rows = domesticRows("USD");
-    if (rows.length < 2) {
+    var today = FxData.todayISO();
+    var todayApplied = FxDomestic.appliedOn("USD", today);
+    var tomorrowApplied = FxDomestic.appliedTomorrow("USD");
+
+    if (!todayApplied) {
       box.innerHTML =
-        '<div class="card"><h2>예상 적용환율</h2><p class="muted small">' +
-        "매매기준율이 2영업일치 이상 쌓여야 오늘·내일을 비교할 수 있습니다." +
+        '<div class="card"><h2>적용환율</h2><p class="muted small">' +
+        "오늘 이전의 매매기준율이 아직 없습니다. 「환율 갱신」을 한 번 더 실행해 과거 데이터를 채워주세요." +
         "</p></div>";
       return;
     }
 
-    var today = FxData.todayISO();
-    var last = rows[rows.length - 1];
-    var prev = rows[rows.length - 2];
-
-    // 오늘 자 고시(보통 11시경 발표)가 이미 나왔다면 그게 '내일 적용분'이 된다.
-    var todayApplied = last.date === today ? prev : last;
-    var tomorrowApplied = last.date === today ? last : null;
     var diff = tomorrowApplied ? tomorrowApplied.rate - todayApplied.rate : NaN;
 
     box.innerHTML =
       '<div class="card">' +
-      '<div class="card__head"><h2>예상 적용환율 (미국 달러)</h2>' +
-      '<span class="muted small">직전 영업일 매매기준율 기준</span></div>' +
+      '<div class="card__head"><h2>적용환율 (미국 달러)</h2>' +
+      '<span class="muted small">전일 고시 매매기준율 기준</span></div>' +
       '<div class="stat-grid stat-grid--2">' +
-      stat("오늘 적용", rate(todayApplied.rate) + "원", todayApplied.date + " 고시분") +
+      stat("오늘 " + dfDayLabel(today), rate(todayApplied.rate) + "원", todayApplied.quoteDate + " 고시분") +
       stat(
-        "내일 적용",
+        "내일 " + dfDayLabel(FxData.shiftDays(today, 1)),
         tomorrowApplied ? rate(tomorrowApplied.rate) + "원" : "미정",
-        tomorrowApplied ? tomorrowApplied.date + " 고시분" : "오늘 고시(11시경) 후 확정",
+        tomorrowApplied ? tomorrowApplied.quoteDate + " 고시분" : "오늘 고시(11시경) 후 확정",
         isFinite(diff) ? (diff > 0 ? "neg" : diff < 0 ? "pos" : "") : ""
       ) +
       "</div>" +
@@ -1398,163 +1312,96 @@
           "원 " +
           (diff > 0 ? "올라갑니다" : diff < 0 ? "내려갑니다" : "같습니다") +
           "</strong>." +
-          (diff < 0 ? " 면세점 구매는 내일이 유리합니다." : diff > 0 ? " 면세점 구매는 오늘이 유리합니다." : "") +
+          (diff < 0 ? " 구매는 내일이 유리합니다." : diff > 0 ? " 구매는 오늘이 유리합니다." : "") +
           "</p>"
         : "") +
-      '<p class="muted small mt">' +
-      "면세점이 전일 고시 매매기준율을 적용한다는 업계 통용 설명에 따른 <strong>추정치</strong>입니다. " +
-      "원천은 서울외국환중개 고시이고 여기 값은 한국수출입은행 고시라 소수점까지 같다는 보장은 없으며, " +
-      "면세점·시점마다 관행이 다를 수 있습니다. 실제 구매 전 면세점에서 확인하세요." +
-      "</p></div>";
+      "</div>";
   }
 
-  function renderDfSummary() {
-    var box = $("dutyFreeSummary");
-    var cards = Object.keys(FxData.CURRENCIES)
-      .map(function (c) {
-        return Portfolio.dutyFreeSummary(c, ratesSeries(c));
-      })
-      .filter(Boolean);
-
-    if (!cards.length) {
+  // ---------------------------------------------------------------------
+  // 최근 일주일 적용환율
+  // ---------------------------------------------------------------------
+  // 주말·공휴일에는 고시가 없어 직전 영업일 값이 그대로 이어진다. 같은 값이
+  // 며칠 반복되는 게 정상이고, 그 사실이 보이도록 '고시일' 열을 같이 보여준다.
+  function renderDfWeek() {
+    var box = $("dutyFreeWeek");
+    if (!box) return;
+    if (!FxDomestic.available()) {
       box.innerHTML = "";
       return;
     }
 
-    box.innerHTML = cards
-      .map(function (d) {
-        var l = d.latest;
-        var verdict = "";
-        if (isFinite(d.premiumPercentile)) {
-          // 프리미엄이 낮을수록 소비자에게 유리하다.
-          verdict =
-            '<p class="note mt">기록 ' +
-            d.count +
-            "건 중 이번 프리미엄은 <strong>" +
-            num(d.premiumPercentile, 0) +
-            " 백분위</strong>입니다 — " +
-            (d.premiumPercentile <= 33
-              ? "지금까지 기록한 것 중 <strong>싸게 쳐주는 편</strong>입니다."
-              : d.premiumPercentile >= 67
-              ? "지금까지 기록한 것 중 <strong>비싸게 쳐주는 편</strong>입니다."
-              : "평소와 비슷한 수준입니다.") +
-            "</p>";
-        } else {
-          verdict =
-            '<p class="muted small mt">기록이 2건 이상 쌓이면 이번 환율이 평소보다 유리한지 비교해 드립니다.</p>';
-        }
-
-        return (
-          '<div class="card">' +
-          '<div class="card__head"><h2>' +
-          esc(d.meta.label) +
-          " 적용환율</h2><span class=\"muted small\">" +
-          esc(l.shopLabel) +
-          " · " +
-          esc(l.record.date) +
-          " 기록</span></div>" +
-          '<div class="stat-grid">' +
-          stat("면세점 적용환율", rate(l.record.rate) + "원", d.meta.unitLabel + " 기준") +
-          stat("기록일 시장환율", isFinite(l.marketRate) ? rate(l.marketRate) + "원" : "—", l.marketDate || "") +
-          stat(
-            "프리미엄",
-            signedPct(l.premiumPct),
-            "시장환율 대비",
-            isFinite(l.premiumPct) ? (l.premiumPct > 0 ? "neg" : "pos") : ""
-          ) +
-          stat(
-            "오늘 시장환율 대비",
-            signedPct(d.latestVsTodayPct),
-            esc(d.todayMarketDate || "") + " 기준",
-            isFinite(d.latestVsTodayPct) ? (d.latestVsTodayPct > 0 ? "neg" : "pos") : ""
-          ) +
-          "</div>" +
-          (isFinite(d.avgPremiumPct)
-            ? '<p class="muted small mt">기록 전체 평균 프리미엄 ' +
-              signedPct(d.avgPremiumPct) +
-              " · 최저 " +
-              signedPct(d.minPremiumPct) +
-              " · 최고 " +
-              signedPct(d.maxPremiumPct) +
-              "</p>"
-            : "") +
-          verdict +
-          '<p class="muted small">「오늘 시장환율 대비」는 마지막으로 기록한 적용환율을 오늘 값과 비교한 참고치입니다. ' +
-          "그 사이 적용환율이 바뀌었을 수 있으니 실제 구매 전 면세점에서 다시 확인하세요.</p>" +
-          "</div>"
-        );
-      })
-      .join("");
-  }
-
-  function renderDfList() {
-    var records = Portfolio.dutyFreeList(null);
-    var box = $("dfList");
-    if (!records.length) {
-      box.innerHTML = '<p class="muted small">기록이 없습니다.</p>';
+    var series = FxDomestic.appliedSeries("USD", DF_WEEK_DAYS);
+    if (!series.length) {
+      box.innerHTML = "";
       return;
     }
 
-    var rowsHtml = records
+    var tomorrow = FxDomestic.appliedTomorrow("USD");
+    var withTomorrow = tomorrow ? series.concat([tomorrow]) : series;
+
+    // 최신이 위로 오게 뒤집는다.
+    var rowsHtml = withTomorrow
       .slice()
       .reverse()
-      .map(function (r) {
-        var meta = FxData.CURRENCIES[r.code];
-        var s = ratesSeries(r.code);
-        var mkt = s && s.rows && s.rows.length ? FxData.rateOn(s.rows, r.date) : null;
-        var prem = mkt ? ((r.rate - mkt.rate) / mkt.rate) * 100 : NaN;
+      .map(function (r, idxFromTop) {
+        var pos = withTomorrow.length - 1 - idxFromTop; // 원래 배열 인덱스
+        var prev = pos > 0 ? withTomorrow[pos - 1] : null;
+        var d = prev ? r.rate - prev.rate : NaN;
+        var isTomorrow = tomorrow && r.appliedDate === tomorrow.appliedDate;
+        var isToday = r.appliedDate === FxData.todayISO();
+        var carried = prev && prev.quoteDate === r.quoteDate; // 고시가 안 바뀐 날(주말 등)
+
         return (
-          "<tr>" +
-          "<td>" +
-          esc(r.date) +
-          "</td>" +
-          "<td>" +
-          esc(Portfolio.shopLabel(r)) +
-          "</td>" +
-          "<td>" +
-          esc(meta.label) +
-          "</td>" +
+          '<tr class="' +
+          (isTomorrow ? "row-hi" : "") +
+          '">' +
+          "<th>" +
+          esc(dfDayLabel(r.appliedDate)) +
+          (isTomorrow ? " <span class=\"badge badge--info\">내일</span>" : isToday ? " <span class=\"badge badge--info\">오늘</span>" : "") +
+          "</th>" +
           "<td><strong>" +
           rate(r.rate) +
-          "</strong></td>" +
-          "<td>" +
-          (mkt ? rate(mkt.rate) : "—") +
-          "</td>" +
+          "</strong>원</td>" +
           '<td class="' +
-          (isFinite(prem) ? (prem > 0 ? "neg" : "pos") : "") +
+          (isFinite(d) ? (d > 0 ? "neg" : d < 0 ? "pos" : "muted") : "muted") +
           '">' +
-          (isFinite(prem) ? signedPct(prem) : "—") +
+          (!isFinite(d) ? "—" : d === 0 ? "0.00" : (d > 0 ? "▲ " : "▼ ") + rate(Math.abs(d))) +
           "</td>" +
-          "<td>" +
-          esc(r.memo) +
+          '<td class="muted">' +
+          esc(r.quoteDate.slice(5)) +
+          (carried ? " (이어짐)" : "") +
           "</td>" +
-          '<td><button type="button" class="link-btn" data-del="' +
-          esc(r.id) +
-          '">삭제</button></td>' +
           "</tr>"
         );
       })
       .join("");
 
     box.innerHTML =
+      '<div class="card">' +
+      "<h2>최근 " +
+      DF_WEEK_DAYS +
+      "일 적용환율</h2>" +
       '<div class="table-scroll"><table class="data-table">' +
-      "<thead><tr><th>날짜</th><th>면세점</th><th>통화</th><th>적용환율</th><th>시장환율</th><th>프리미엄</th><th>메모</th><th></th></tr></thead>" +
+      "<thead><tr><th>적용일</th><th>적용환율</th><th>전일 대비</th><th>고시일</th></tr></thead>" +
       "<tbody>" +
       rowsHtml +
-      "</tbody></table></div>";
+      "</tbody></table></div>" +
+      '<p class="muted small mt">고시일이 「이어짐」이면 그날 새 고시가 없어 직전 영업일 값이 그대로 적용된 것입니다(주말·공휴일).</p>' +
+      "</div>";
   }
 
+  // ---------------------------------------------------------------------
+  // 상품가 환산 계산기
+  // ---------------------------------------------------------------------
   function renderDfCalc() {
-    var code = $("dfCcy").value;
-    var meta = FxData.CURRENCIES[code];
-    var s = ratesSeries(code);
+    var meta = FxData.CURRENCIES.USD;
     var price = Number($("dfCalcPrice").value);
 
-    // 사용자가 안 건드렸으면 마지막 기록값 → 기록이 없으면 오늘 시장환율을 기본값으로 채운다.
+    // 사용자가 안 건드렸으면 오늘 적용환율을 기본값으로 채운다.
     if (!dfCalcRateTouched) {
-      var list = Portfolio.dutyFreeList(code);
-      var fallback = list.length ? list[list.length - 1].rate : s && isFinite(s.lastRate) ? s.lastRate : null;
-      $("dfCalcRate").value = fallback ? fallback.toFixed(2) : "";
+      var todayApplied = FxDomestic.available() ? FxDomestic.appliedOn("USD", FxData.todayISO()) : null;
+      $("dfCalcRate").value = todayApplied ? todayApplied.rate.toFixed(2) : "";
     }
     var applied = Number($("dfCalcRate").value);
 
@@ -1563,35 +1410,29 @@
       return;
     }
 
-    var units = price / meta.unit;
-    var dfKrw = units * applied;
-    var market = s && isFinite(s.lastRate) ? s.lastRate : NaN;
-    var mktKrw = isFinite(market) ? units * market : NaN;
-    var diff = isFinite(mktKrw) ? dfKrw - mktKrw : NaN;
+    var krw = price * applied;
+
+    // 같은 금액을 '달러 현찰을 환전해서' 준비했다면 얼마였을지 — 스프레드 차이를 보여준다.
+    var spread = Portfolio.effectiveSpread("USD");
+    var cashRate = applied * (1 + spread);
+    var cashKrw = price * cashRate;
 
     $("dfCalcResult").innerHTML =
       '<div class="stat-grid stat-grid--2 mt">' +
+      stat("원화 결제액", won(krw), num(price, 2) + " 달러 × " + rate(applied) + "원") +
       stat(
-        "면세점 환산액",
-        won(dfKrw),
-        num(price, 2) + " " + meta.amountLabel + " × " + rate(applied) + "원"
-      ) +
-      stat(
-        "시장환율 기준",
-        won(mktKrw),
-        isFinite(market) ? rate(market) + "원 (" + esc(s.lastDate) + ")" : "—"
+        "현찰 환전 시",
+        won(cashKrw),
+        "스프레드 " + pct(spread * 100) + " 반영 (" + rate(cashRate) + "원)"
       ) +
       "</div>" +
-      (isFinite(diff)
-        ? '<p class="note mt">면세점 환율로 계산하면 시장환율 대비 <strong class="' +
-          (diff > 0 ? "neg" : "pos") +
-          '">' +
-          signedWon(diff) +
-          "</strong> (" +
-          signedPct((diff / mktKrw) * 100) +
-          ") 차이가 납니다.</p>"
-        : "");
+      '<p class="note mt">같은 상품이라도 달러 현찰을 환전해 결제하면 <strong class="neg">' +
+      signedWon(cashKrw - krw) +
+      "</strong> (" +
+      signedPct((spread * 100)) +
+      ") 더 듭니다. 스프레드는 「내 보유 → 환전 조건 설정」에서 본인 조건으로 바꿀 수 있습니다.</p>";
   }
+
 
   // ---------------------------------------------------------------------
   // 모델 성적표 탭

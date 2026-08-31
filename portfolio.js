@@ -30,15 +30,6 @@
     ratesUrl: "",
   };
 
-  // 면세점 적용환율은 각 면세점이 자체적으로 고시한다(공개 API 없음).
-  // 사용자가 아래 사이트에서 보고 직접 입력하는 방식이라 링크만 들고 있는다.
-  var DUTY_FREE_SHOPS = [
-    { key: "lotte", label: "롯데면세점", url: "https://kor.lottedfs.com/" },
-    { key: "shilla", label: "신라면세점", url: "https://www.shilladfs.com/" },
-    { key: "shinsegae", label: "신세계면세점", url: "https://www.ssgdfs.com/" },
-    { key: "hyundai", label: "현대면세점", url: "https://www.hddfs.com/" },
-    { key: "etc", label: "기타/직접입력", url: null },
-  ];
 
   var state = null;
 
@@ -52,7 +43,6 @@
       buys: [],
       plans: [],
       alerts: [],
-      dutyFree: [],
       settings: JSON.parse(JSON.stringify(DEFAULT_SETTINGS)),
     };
   }
@@ -65,7 +55,6 @@
     if (!Array.isArray(s.buys)) s.buys = [];
     if (!Array.isArray(s.plans)) s.plans = [];
     if (!Array.isArray(s.alerts)) s.alerts = [];
-    if (!Array.isArray(s.dutyFree)) s.dutyFree = []; // 면세점 기능 추가 이전 백업도 열리게
     if (!s.settings) s.settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
     if (!s.settings.sellSpreadPct) s.settings.sellSpreadPct = { USD: 1.75, JPY: 1.75 };
     if (!s.settings.preferentialPct) s.settings.preferentialPct = { USD: 0, JPY: 0 };
@@ -402,116 +391,6 @@
   }
 
   // ---------------------------------------------------------------------
-  // 면세점 적용환율 (수동 기록)
-  // ---------------------------------------------------------------------
-  // 2026-08-31 조사 결과 — 자동 조회는 불가능하다:
-  //  - 면세점 적용환율은 롯데/신라/신세계 등이 각자 정해 자사 사이트에만 공지한다.
-  //    공개 API가 없고, 사이트는 CORS를 안 열어줘서 브라우저에서 못 읽는다.
-  //  - 관세청 주간환율 API(공공데이터포털/UNI-PASS)는 ① 인증키 필요 ② CORS 미지원
-  //    ③ 애초에 수입 통관용 '과세환율'이라 면세점 적용환율과 다른 값이다.
-  //  - 면세점이 서울외국환중개 전일 고시 매매기준율을 기준으로 한다는 설명이 흔하지만
-  //    면세점·시점마다 관행이 달라 확인이 필요하다. 그래서 추정값을 만들어 보여주지 않고,
-  //    사용자가 실제로 본 숫자를 기록하게 하는 쪽을 택했다.
-  //
-  // 대신 기록해두면 ECB 시장환율과 비교해 '프리미엄'(면세점이 얼마나 더 비싸게 쳐주는지)을
-  // 계산할 수 있고, 이력이 쌓이면 이번 주가 상대적으로 유리한지 판단할 근거가 된다.
-
-  function addDutyFree(rec) {
-    var s = load();
-    var r = Number(rec.rate);
-    if (!rec.date || !global.FxData.CURRENCIES[rec.code]) throw new Error("날짜와 통화를 확인해주세요.");
-    if (!(r > 0)) throw new Error("적용환율은 0보다 커야 합니다.");
-    s.dutyFree.push({
-      id: uid(),
-      date: rec.date,
-      code: rec.code,
-      shop: rec.shop || "etc",
-      shopName: rec.shopName || "",
-      rate: r,
-      memo: rec.memo || "",
-    });
-    s.dutyFree.sort(function (a, b) {
-      return a.date < b.date ? -1 : a.date > b.date ? 1 : 0;
-    });
-    save();
-    return s.dutyFree;
-  }
-
-  function removeDutyFree(id) {
-    var s = load();
-    s.dutyFree = s.dutyFree.filter(function (d) {
-      return d.id !== id;
-    });
-    save();
-    return s.dutyFree;
-  }
-
-  function dutyFreeList(code) {
-    return load().dutyFree.filter(function (d) {
-      return !code || d.code === code;
-    });
-  }
-
-  function shopLabel(rec) {
-    if (rec.shop === "etc") return rec.shopName || "기타";
-    for (var i = 0; i < DUTY_FREE_SHOPS.length; i++) {
-      if (DUTY_FREE_SHOPS[i].key === rec.shop) return DUTY_FREE_SHOPS[i].label;
-    }
-    return rec.shop;
-  }
-
-  // 프리미엄(%) = (면세점 적용환율 - 그날 시장환율) / 그날 시장환율 × 100
-  // 양수면 면세점이 시장환율보다 비싸게 쳐준다는 뜻 = 소비자에게 불리.
-  function dutyFreeSummary(code, series) {
-    var records = dutyFreeList(code);
-    if (!records.length) return null;
-    var rows = series && series.rows && series.rows.length ? series.rows : null;
-
-    var history = records.map(function (r) {
-      var mkt = rows ? global.FxData.rateOn(rows, r.date) : null;
-      return {
-        record: r,
-        shopLabel: shopLabel(r),
-        marketRate: mkt ? mkt.rate : NaN,
-        marketDate: mkt ? mkt.date : null,
-        premiumPct: mkt ? ((r.rate - mkt.rate) / mkt.rate) * 100 : NaN,
-      };
-    });
-
-    var known = history
-      .filter(function (h) {
-        return isFinite(h.premiumPct);
-      })
-      .map(function (h) {
-        return h.premiumPct;
-      });
-
-    var latest = history[history.length - 1];
-    var todayMarket = series && isFinite(series.lastRate) ? series.lastRate : NaN;
-
-    return {
-      code: code,
-      meta: global.FxData.CURRENCIES[code],
-      history: history,
-      latest: latest,
-      count: history.length,
-      avgPremiumPct: known.length ? known.reduce(function (a, b) { return a + b; }, 0) / known.length : NaN,
-      minPremiumPct: known.length ? Math.min.apply(null, known) : NaN,
-      maxPremiumPct: known.length ? Math.max.apply(null, known) : NaN,
-      // 기록이 2건 이상일 때만 "지금이 상대적으로 유리한가"를 말할 수 있다.
-      premiumPercentile:
-        known.length >= 2 && isFinite(latest.premiumPct)
-          ? global.FxStats.percentileRank(known, latest.premiumPct)
-          : NaN,
-      todayMarketRate: todayMarket,
-      todayMarketDate: series ? series.lastDate : null,
-      // 가장 최근에 기록한 적용환율을 오늘 시장환율과 비교한 값.
-      // 적용환율이 그 사이 바뀌었을 수 있으므로 어디까지나 참고치다.
-      latestVsTodayPct: isFinite(todayMarket) ? ((latest.record.rate - todayMarket) / todayMarket) * 100 : NaN,
-    };
-  }
-
-  // ---------------------------------------------------------------------
   // 설정 / 내보내기 / 가져오기
   // ---------------------------------------------------------------------
 
@@ -555,14 +434,8 @@
   }
 
   global.Portfolio = {
-    DUTY_FREE_SHOPS: DUTY_FREE_SHOPS,
     load: load,
     save: save,
-    addDutyFree: addDutyFree,
-    removeDutyFree: removeDutyFree,
-    dutyFreeList: dutyFreeList,
-    dutyFreeSummary: dutyFreeSummary,
-    shopLabel: shopLabel,
     addBuy: addBuy,
     removeBuy: removeBuy,
     buysFor: buysFor,
