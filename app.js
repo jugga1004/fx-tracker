@@ -121,8 +121,11 @@
     return v.toLocaleString("ko-KR", { minimumFractionDigits: digits, maximumFractionDigits: digits });
   }
 
+  // 환율은 소수점 한 자리까지만 보여준다. 매매기준율 자체가 1,380.3 처럼
+  // 한 자리로 고시되므로 두 자리로 늘려 봐야 없는 정밀도를 지어내는 셈이다.
+  // (저장값은 원본 그대로 두고 표시만 반올림한다)
   function rate(v) {
-    return num(v, 2);
+    return num(v, 1);
   }
 
   function won(v) {
@@ -1383,7 +1386,7 @@
           '<td class="' +
           (isFinite(d) ? (d > 0 ? "neg" : d < 0 ? "pos" : "muted") : "muted") +
           '">' +
-          (!isFinite(d) ? "—" : d === 0 ? "0.00" : (d > 0 ? "▲ " : "▼ ") + rate(Math.abs(d))) +
+          (!isFinite(d) ? "—" : d === 0 ? rate(0) : (d > 0 ? "▲ " : "▼ ") + rate(Math.abs(d))) +
           "</td>" +
           '<td class="muted">' +
           esc(r.quoteDate.slice(5)) +
