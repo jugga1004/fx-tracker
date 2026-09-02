@@ -1265,6 +1265,18 @@
     return iso.slice(5) + " (" + WEEKDAY_KO[FxData.parseISO(iso).getDay()] + ")";
   }
 
+  // 내일 적용분이 '미정'인 이유는 두 가지인데 사용자 입장에서 뜻이 전혀 다르다.
+  //  (1) 아직 오늘 고시(11시경) 전 — 기다리는 수밖에 없다
+  //  (2) 고시는 나왔는데 우리 데이터가 아직 못 따라옴 — GitHub Actions 예약 실행이
+  //      몇 시간씩 밀리는 일이 흔하다. 이건 잠시 뒤 다시 보면 해결된다.
+  // 둘을 구분해줘야 "왜 안 나오지"를 헤매지 않는다.
+  function tomorrowSubLabel(tomorrowApplied) {
+    if (tomorrowApplied) return tomorrowApplied.quoteDate.slice(5) + " 고시";
+    var now = new Date();
+    var afterQuoteTime = now.getHours() > 11 || (now.getHours() === 11 && now.getMinutes() >= 30);
+    return afterQuoteTime ? "오늘 고시 반영 대기 중" : "오늘 고시(11시경) 후 확정";
+  }
+
   // ---------------------------------------------------------------------
   // 오늘 / 내일 적용환율
   // ---------------------------------------------------------------------
@@ -1320,9 +1332,7 @@
       stat(
         "내일",
         tomorrowApplied ? rate(tomorrowApplied.rate) + "원" : "미정",
-        dfDayLabel(FxData.shiftDays(today, 1)) +
-          "<br />" +
-          (tomorrowApplied ? tomorrowApplied.quoteDate.slice(5) + " 고시" : "오늘 고시 후 확정"),
+        dfDayLabel(FxData.shiftDays(today, 1)) + "<br />" + tomorrowSubLabel(tomorrowApplied),
         isFinite(diff) ? (diff > 0 ? "neg" : diff < 0 ? "pos" : "") : ""
       ) +
       "</div>" +
