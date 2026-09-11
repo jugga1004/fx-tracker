@@ -314,6 +314,12 @@
     Array.prototype.forEach.call(document.querySelectorAll(".view"), function (s) {
       s.hidden = s.id !== "view-" + view;
     });
+
+    // 면세점환율 탭은 전부 '확정 고시' 기준이라, 상단의 실시간 환율이 같이 보이면
+    // 어느 쪽을 봐야 하는지 헷갈린다. 이 탭에서는 상단 환율을 숨긴다.
+    var hideRates = view === "dutyfree";
+    $("rateCards").hidden = hideRates;
+    $("dataStatus").hidden = hideRates;
     if (view === "models") renderModels();
     if (view === "plan") renderPlan();
     if (view === "holdings") renderHoldings();
