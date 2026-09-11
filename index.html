@@ -19,10 +19,8 @@
     <h1>환율 추적기</h1>
     <p class="app-header__sub">달러·엔 매수 기록과 과거 데이터 확인용 개인 도구</p>
 
-    <div id="rateCards" class="rate-cards"></div>
-    <div id="dataStatus" class="data-status"></div>
-    <div id="alertBanner" class="alert-banner" hidden></div>
-
+    <!-- 탭이 환율 카드 위에 온다. 카드는 탭마다 보이거나 숨는데(면세점환율 탭에서는 숨김)
+         그 아래에 탭이 있으면 탭 위치가 오르내려서 누르려던 자리를 놓친다. -->
     <div id="tabs" class="mode-tabs" role="tablist">
       <button type="button" class="mode-tab" data-view="overview" role="tab" aria-selected="true">현황</button>
       <button type="button" class="mode-tab" data-view="holdings" role="tab" aria-selected="false">내 보유</button>
@@ -30,6 +28,10 @@
       <button type="button" class="mode-tab" data-view="dutyfree" role="tab" aria-selected="false">면세점환율</button>
       <button type="button" class="mode-tab" data-view="models" role="tab" aria-selected="false">모델 성적표</button>
     </div>
+
+    <div id="rateCards" class="rate-cards"></div>
+    <div id="dataStatus" class="data-status"></div>
+    <div id="alertBanner" class="alert-banner" hidden></div>
   </header>
 
   <main>
