@@ -1241,24 +1241,50 @@
 
   var DF_WEEK_DAYS = 7;
   var WEEKDAY_KO = ["일", "월", "화", "수", "목", "금", "토"];
-  var dfCalcRateTouched = false;
 
   function wireDutyFree() {
-    $("dfCalcPrice").addEventListener("input", renderDfCalc);
-    // 사용자가 환율 칸을 직접 건드렸으면 그 값을 존중하고, 아니면 오늘 적용환율을 따라간다.
-    $("dfCalcRate").addEventListener("input", function () {
-      dfCalcRateTouched = true;
-      renderDfCalc();
-    });
-    $("dfCalcForm").addEventListener("submit", function (e) {
+    $("dfItemUsd").addEventListener("input", updateDfItemPreview);
+
+    $("dfItemForm").addEventListener("submit", function (e) {
       e.preventDefault();
+      var box = $("dfItemError");
+      box.hidden = true;
+      try {
+        Portfolio.addItem({ name: $("dfItemName").value, usd: $("dfItemUsd").value });
+        $("dfItemName").value = "";
+        $("dfItemUsd").value = "";
+        updateDfItemPreview();
+        renderDfItems();
+      } catch (err) {
+        box.textContent = err.message;
+        box.hidden = false;
+      }
+    });
+
+    $("dfItems").addEventListener("click", function (e) {
+      var btn = e.target.closest("button[data-del]");
+      if (!btn) return;
+      Portfolio.removeItem(btn.dataset.del);
+      renderDfItems();
     });
   }
 
   function renderDutyFree() {
     renderDfEstimate();
     renderDfWeek();
-    renderDfCalc();
+    renderDfItems();
+  }
+
+  // 입력 중인 금액이 오늘 얼마인지 즉시 보여준다 — 등록 전에도 계산기처럼 쓸 수 있게.
+  function updateDfItemPreview() {
+    var usd = Number($("dfItemUsd").value);
+    var applied = dfTodayRate();
+    $("dfItemPreview").textContent =
+      usd > 0 && applied ? "오늘 기준 " + won(usd * applied.rate) + " (" + rate(applied.rate) + "원 적용)" : "";
+  }
+
+  function dfTodayRate() {
+    return FxDomestic.available() ? FxDomestic.appliedOn("USD", FxData.todayISO()) : null;
   }
 
   function dfDayLabel(iso) {
@@ -1422,45 +1448,104 @@
   }
 
   // ---------------------------------------------------------------------
-  // 상품가 환산 계산기
+  // 관심 상품 — 등록한 달러 표시가의 오늘/내일 원화가
   // ---------------------------------------------------------------------
-  function renderDfCalc() {
-    var meta = FxData.CURRENCIES.USD;
-    var price = Number($("dfCalcPrice").value);
+  function renderDfItems() {
+    var box = $("dfItems");
+    if (!box) return;
 
-    // 사용자가 안 건드렸으면 오늘 적용환율을 기본값으로 채운다.
-    if (!dfCalcRateTouched) {
-      var todayApplied = FxDomestic.available() ? FxDomestic.appliedOn("USD", FxData.todayISO()) : null;
-      $("dfCalcRate").value = todayApplied ? todayApplied.rate.toFixed(2) : "";
-    }
-    var applied = Number($("dfCalcRate").value);
-
-    if (!(price > 0) || !(applied > 0)) {
-      $("dfCalcResult").innerHTML = "";
+    var items = Portfolio.listItems();
+    if (!items.length) {
+      box.innerHTML = '<p class="muted small mt">등록한 상품이 없습니다. 위에 가격을 넣고 추가해보세요.</p>';
       return;
     }
 
-    var krw = price * applied;
+    var todayApplied = dfTodayRate();
+    if (!todayApplied) {
+      box.innerHTML =
+        '<p class="muted small mt">적용환율이 있어야 원화가를 계산할 수 있습니다. ' +
+        "「환율 갱신」이 한 번 실행되면 자동으로 채워집니다.</p>";
+      return;
+    }
+    var tomorrowApplied = FxDomestic.appliedTomorrow("USD");
 
-    // 같은 금액을 '달러 현찰을 환전해서' 준비했다면 얼마였을지 — 스프레드 차이를 보여준다.
-    var spread = Portfolio.effectiveSpread("USD");
-    var cashRate = applied * (1 + spread);
-    var cashKrw = price * cashRate;
+    var totalUsd = 0;
+    var rowsHtml = items
+      .map(function (it) {
+        totalUsd += it.usd;
+        var todayKrw = it.usd * todayApplied.rate;
+        var tomorrowKrw = tomorrowApplied ? it.usd * tomorrowApplied.rate : NaN;
+        var d = isFinite(tomorrowKrw) ? tomorrowKrw - todayKrw : NaN;
+        return (
+          "<tr>" +
+          "<th>" +
+          (it.name ? esc(it.name) : '<span class="muted">이름 없음</span>') +
+          "</th>" +
+          "<td>$" +
+          num(it.usd, 2) +
+          "</td>" +
+          "<td>" +
+          won(todayKrw) +
+          "</td>" +
+          "<td>" +
+          (isFinite(tomorrowKrw) ? won(tomorrowKrw) : '<span class="muted">미정</span>') +
+          "</td>" +
+          '<td class="' +
+          (isFinite(d) ? (d > 0 ? "neg" : d < 0 ? "pos" : "muted") : "muted") +
+          '">' +
+          (isFinite(d) ? signedWon(d) : "—") +
+          "</td>" +
+          '<td><button type="button" class="link-btn" data-del="' +
+          esc(it.id) +
+          '">삭제</button></td>' +
+          "</tr>"
+        );
+      })
+      .join("");
 
-    $("dfCalcResult").innerHTML =
-      '<div class="stat-grid stat-grid--2 mt">' +
-      stat("원화 결제액", won(krw), num(price, 2) + " 달러 × " + rate(applied) + "원") +
-      stat(
-        "현찰 환전 시",
-        won(cashKrw),
-        "스프레드 " + pct(spread * 100) + " 반영 (" + rate(cashRate) + "원)"
-      ) +
-      "</div>" +
-      '<p class="note mt">같은 상품이라도 달러 현찰을 환전해 결제하면 <strong class="neg">' +
-      signedWon(cashKrw - krw) +
-      "</strong> (" +
-      signedPct((spread * 100)) +
-      ") 더 듭니다. 스프레드는 「내 보유 → 환전 조건 설정」에서 본인 조건으로 바꿀 수 있습니다.</p>";
+    var totalToday = totalUsd * todayApplied.rate;
+    var totalTomorrow = tomorrowApplied ? totalUsd * tomorrowApplied.rate : NaN;
+    var totalDiff = isFinite(totalTomorrow) ? totalTomorrow - totalToday : NaN;
+
+    // 합계 행은 tfoot에 둬서 상품이 많아져도 눈에 띄게 한다.
+    var footHtml =
+      '<tr class="row-hi"><th>합계 ' +
+      items.length +
+      "건</th><td>$" +
+      num(totalUsd, 2) +
+      "</td><td><strong>" +
+      won(totalToday) +
+      "</strong></td><td><strong>" +
+      (isFinite(totalTomorrow) ? won(totalTomorrow) : '<span class="muted">미정</span>') +
+      '</strong></td><td class="' +
+      (isFinite(totalDiff) ? (totalDiff > 0 ? "neg" : totalDiff < 0 ? "pos" : "muted") : "muted") +
+      '"><strong>' +
+      (isFinite(totalDiff) ? signedWon(totalDiff) : "—") +
+      "</strong></td><td></td></tr>";
+
+    var verdict = "";
+    if (isFinite(totalDiff) && Math.round(totalDiff) !== 0) {
+      verdict =
+        '<p class="note mt">등록한 ' +
+        items.length +
+        "건을 전부 산다면 <strong>" +
+        (totalDiff < 0 ? "내일" : "오늘") +
+        "</strong>이 <strong>" +
+        won(Math.abs(totalDiff)) +
+        "</strong> 저렴합니다.</p>";
+    } else if (isFinite(totalDiff)) {
+      verdict = '<p class="muted small mt">오늘과 내일 적용환율이 같아 가격 차이가 없습니다.</p>';
+    }
+
+    box.innerHTML =
+      '<div class="table-scroll mt"><table class="data-table">' +
+      "<thead><tr><th>상품</th><th>달러</th><th>오늘</th><th>내일</th><th>차이</th><th></th></tr></thead>" +
+      "<tbody>" +
+      rowsHtml +
+      "</tbody><tfoot>" +
+      footHtml +
+      "</tfoot></table></div>" +
+      verdict;
   }
 
 

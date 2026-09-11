@@ -206,15 +206,18 @@
       <div id="dutyFreeWeek"></div>
 
       <div class="card">
-        <h2>상품가 환산 계산기</h2>
+        <h2>관심 상품</h2>
         <p class="muted small">
-          면세점 달러 표시가를 원화로 환산합니다. 환율 칸은 오늘 적용환율이 기본으로 들어가며 직접 고칠 수 있습니다.
+          면세점 달러 표시가를 적어두면 적용환율이 바뀔 때마다 오늘·내일 원화가가 자동으로 갱신됩니다.
         </p>
-        <form id="dfCalcForm" class="form-row">
-          <label class="grow"><span>상품 가격 (달러)</span><input id="dfCalcPrice" type="number" step="0.01" min="0" placeholder="250" /></label>
-          <label class="grow"><span>적용환율 (1달러당 원)</span><input id="dfCalcRate" type="number" step="0.01" min="0" placeholder="1376.5" /></label>
+        <form id="dfItemForm" class="form-row">
+          <label class="grow"><span>상품명 (선택)</span><input id="dfItemName" type="text" placeholder="예: 향수 100ml" /></label>
+          <label class="grow"><span>가격 (달러)</span><input id="dfItemUsd" type="number" step="0.01" min="0" placeholder="120" required /></label>
+          <button type="submit">추가</button>
         </form>
-        <div id="dfCalcResult"></div>
+        <div id="dfItemPreview" class="muted small mt"></div>
+        <div id="dfItemError" class="error-box" hidden></div>
+        <div id="dfItems"></div>
         <p class="note mt">
           <strong>적용환율과 환전 환율은 다릅니다.</strong> 적용환율은 표시가를 원화로 바꾸는 환산율이라
           매매기준율 그대로이고 스프레드가 없습니다. 반면 은행에서 달러를 사면 매매기준율에 스프레드(현찰 통상 +1.75%)가 붙습니다.

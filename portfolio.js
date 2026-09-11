@@ -43,6 +43,7 @@
       buys: [],
       plans: [],
       alerts: [],
+      items: [], // 면세점 관심 상품
       settings: JSON.parse(JSON.stringify(DEFAULT_SETTINGS)),
     };
   }
@@ -55,6 +56,7 @@
     if (!Array.isArray(s.buys)) s.buys = [];
     if (!Array.isArray(s.plans)) s.plans = [];
     if (!Array.isArray(s.alerts)) s.alerts = [];
+    if (!Array.isArray(s.items)) s.items = []; // 관심 상품 기능 이전 백업도 열리게
     if (!s.settings) s.settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
     if (!s.settings.sellSpreadPct) s.settings.sellSpreadPct = { USD: 1.75, JPY: 1.75 };
     if (!s.settings.preferentialPct) s.settings.preferentialPct = { USD: 0, JPY: 0 };
@@ -391,6 +393,38 @@
   }
 
   // ---------------------------------------------------------------------
+  // 면세점 관심 상품
+  // ---------------------------------------------------------------------
+  // 달러 표시가만 적어두면 적용환율이 바뀔 때마다 원화가가 자동으로 따라온다.
+  // 국내 면세점 표시가는 달러 기준이라 통화 구분은 두지 않는다.
+
+  function addItem(rec) {
+    var s = load();
+    var usd = Number(rec.usd);
+    if (!(usd > 0)) throw new Error("상품 가격은 0보다 커야 합니다.");
+    s.items.push({
+      id: uid(),
+      name: String(rec.name || "").trim(),
+      usd: usd,
+    });
+    save();
+    return s.items;
+  }
+
+  function removeItem(id) {
+    var s = load();
+    s.items = s.items.filter(function (it) {
+      return it.id !== id;
+    });
+    save();
+    return s.items;
+  }
+
+  function listItems() {
+    return load().items;
+  }
+
+  // ---------------------------------------------------------------------
   // 설정 / 내보내기 / 가져오기
   // ---------------------------------------------------------------------
 
@@ -450,6 +484,9 @@
     addAlert: addAlert,
     removeAlert: removeAlert,
     triggeredAlerts: triggeredAlerts,
+    addItem: addItem,
+    removeItem: removeItem,
+    listItems: listItems,
     getSettings: getSettings,
     setSpread: setSpread,
     setRatesUrl: setRatesUrl,
