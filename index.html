@@ -136,6 +136,20 @@
           <button type="button" id="ratesReload" class="ghost">다시 받기</button>
         </form>
         <div id="ratesStatus" class="muted small mt"></div>
+
+        <h3>실시간 조회 (권장)</h3>
+        <p class="muted small">
+          위 파일은 GitHub Actions 예약으로 갱신되는데, 무료 러너라 예약이 통째로 건너뛰는 일이 잦습니다.
+          그러면 정작 필요한 당일 고시가 없어 <strong>내일 적용환율을 못 보여줍니다.</strong>
+          Cloudflare Worker를 붙이면 <strong>앱을 여는 순간</strong> 직접 조회하므로 예약과 무관하게 항상 최신입니다.
+          파일이 이미 오늘 자를 담고 있으면 호출하지 않습니다. 배포 방법은 <code>worker/README.md</code>에 있습니다.
+        </p>
+        <form id="liveForm" class="form-row">
+          <label class="grow"><span>Worker 주소</span><input id="liveUrl" type="url" placeholder="https://fx-live.계정이름.workers.dev" /></label>
+          <button type="submit">연결 확인</button>
+          <button type="button" id="liveFetch" class="ghost">지금 받기</button>
+        </form>
+        <div id="liveStatus" class="muted small mt"></div>
       </div>
 
       <div class="card">

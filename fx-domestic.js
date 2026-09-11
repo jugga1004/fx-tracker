@@ -149,7 +149,96 @@
       })
       .catch(function (err) {
         return { error: err.message };
+      })
+      .then(function (res) {
+        // rates.json은 GitHub Actions 예약에 의존하는데 그 예약이 통째로 건너뛰는 일이
+        // 잦다. 그러면 정작 필요한 당일 값이 없어 '내일 적용환율'을 못 보여준다.
+        // 그래서 파일이 오늘을 못 따라왔을 때만 Worker에 직접 물어본다.
+        return topUpFromLive().then(function (live) {
+          if (!live) return res;
+          if (res && res.error) return { latest: latestDate(), count: count(), live: true };
+          res.live = true;
+          res.latest = latestDate();
+          res.count = count();
+          return res;
+        });
       });
+  }
+
+  // ---------------------------------------------------------------------
+  // 실시간 보충 (Cloudflare Worker)
+  // ---------------------------------------------------------------------
+  // 예약 갱신이 밀려도 앱을 여는 순간 오늘 값을 채우기 위한 경로다.
+  // 파일이 이미 최신이면 아예 호출하지 않는다 — 수출입은행 API는 하루 1,000회 제한이 있다.
+
+  var LIVE_RETRY_MS = 10 * 60 * 1000; // 실패했더라도 10분 안에는 다시 조르지 않는다
+  var lastLiveTry = 0;
+
+  function liveUrl() {
+    return (global.Portfolio.getSettings().liveUrl || "").trim();
+  }
+
+  function liveEnabled() {
+    return !!liveUrl();
+  }
+
+  // 보충이 필요한 상황인지. 오늘 자가 이미 있으면 볼 필요가 없다.
+  function needsLive() {
+    if (!liveEnabled()) return false;
+    if (latestDate() === global.FxData.todayISO()) return false;
+    if (Date.now() - lastLiveTry < LIVE_RETRY_MS) return false;
+    // 고시는 11시경이라 그전에 물어봐야 빈손이다. 주말도 마찬가지.
+    var now = new Date();
+    if (now.getDay() === 0 || now.getDay() === 6) return false;
+    return now.getHours() >= 11;
+  }
+
+  // 성공하면 true. 실패는 조용히 삼킨다 — 파일 데이터만으로도 앱은 돌아가야 한다.
+  // force=true 면 시간·중복 조건을 무시한다(설정 화면의 「지금 받기」용).
+  function topUpFromLive(force) {
+    if (!liveEnabled()) return Promise.resolve(false);
+    if (!force && !needsLive()) return Promise.resolve(false);
+    lastLiveTry = Date.now();
+    return fetchJson(liveUrl() + "/v1/recent?days=5")
+      .then(function (body) {
+        if (!body || body.ok === false || !body.rates) throw new Error((body && body.error) || "형식 오류");
+        var c = load();
+        var added = 0;
+        Object.keys(body.rates).forEach(function (iso) {
+          var row = body.rates[iso];
+          if (!row || (typeof row.USD !== "number" && typeof row.JPY !== "number")) return;
+          if (!c.byDate[iso]) added++;
+          c.byDate[iso] = row;
+        });
+        var all = Object.keys(c.byDate).sort();
+        c.latestDate = all[all.length - 1];
+        save();
+        return added > 0;
+      })
+      .catch(function () {
+        return false;
+      });
+  }
+
+  // 설정 화면에서 주소를 확인할 때 쓴다. 실패를 그대로 던진다.
+  function checkLive(url) {
+    var clean = String(url || "").trim().replace(/\/+$/, "");
+    if (!clean) throw new Error("주소를 입력해주세요.");
+    if (!/^https:\/\//i.test(clean)) throw new Error("https:// 로 시작하는 주소여야 합니다.");
+    return fetchJson(clean + "/v1/health").then(function (body) {
+      if (!body || body.ok === false) throw new Error((body && body.error) || "응답 오류");
+      if (!body.keyConfigured) {
+        throw new Error("Worker는 살아 있지만 인증키(KOREAEXIM_KEY)가 없습니다. Settings → Variables and Secrets 에서 Secret으로 등록하세요.");
+      }
+      global.Portfolio.setLiveUrl(clean);
+      lastLiveTry = 0; // 방금 붙였으니 바로 한 번 받아온다
+      return body;
+    });
+  }
+
+  // 「지금 받기」 버튼용. 시간·중복 조건을 무시하고 강제로 한 번 조회한다.
+  function forceLive() {
+    return topUpFromLive(true);
   }
 
   // 주소를 바꿀 때만 쓰는 검증용. 이쪽은 실패를 그대로 던진다.
@@ -267,6 +356,10 @@
     appliedOn: appliedOn,
     appliedSeries: appliedSeries,
     appliedTomorrow: appliedTomorrow,
+    liveUrl: liveUrl,
+    liveEnabled: liveEnabled,
+    checkLive: checkLive,
+    forceLive: forceLive,
     count: count,
     clear: clear,
     SOURCE_LABEL: "한국수출입은행 매매기준율",

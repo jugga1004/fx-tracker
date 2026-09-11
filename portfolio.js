@@ -28,6 +28,9 @@
     // 국내 매매기준율 JSON 주소. 비워두면 같은 저장소의 ./data/rates.json을 읽는다.
     // 앱을 다른 곳에 올렸을 때만 절대 주소를 넣는다 — 인증키는 GitHub Secrets에만 있다.
     ratesUrl: "",
+    // 실시간 조회 Worker 주소. 비워두면 rates.json만 쓴다(= 예약 갱신에 의존).
+    // rates.json이 오늘 자를 못 따라왔을 때만 호출한다. 인증키는 Worker Secret에만 있다.
+    liveUrl: "",
   };
 
 
@@ -61,6 +64,7 @@
     if (!s.settings.sellSpreadPct) s.settings.sellSpreadPct = { USD: 1.75, JPY: 1.75 };
     if (!s.settings.preferentialPct) s.settings.preferentialPct = { USD: 0, JPY: 0 };
     if (typeof s.settings.ratesUrl !== "string") s.settings.ratesUrl = "";
+    if (typeof s.settings.liveUrl !== "string") s.settings.liveUrl = "";
     return s;
   }
 
@@ -451,6 +455,13 @@
     return s.settings.ratesUrl;
   }
 
+  function setLiveUrl(url) {
+    var s = load();
+    s.settings.liveUrl = String(url || "").trim().replace(/\/+$/, "");
+    save();
+    return s.settings.liveUrl;
+  }
+
   function exportJSON() {
     return JSON.stringify(load(), null, 2);
   }
@@ -494,6 +505,7 @@
     getSettings: getSettings,
     setSpread: setSpread,
     setRatesUrl: setRatesUrl,
+    setLiveUrl: setLiveUrl,
     exportJSON: exportJSON,
     importJSON: importJSON,
     resetAll: resetAll,

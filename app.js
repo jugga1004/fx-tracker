@@ -339,8 +339,11 @@
             var prev = dom[dom.length - 2];
             delta = { abs: primary.rate - prev.rate, pct: ((primary.rate - prev.rate) / prev.rate) * 100 };
           }
+          // 어느 날짜 고시인지 값 바로 옆에 적는다. 이게 없으면 면세점 탭의
+          // '오늘 적용환율'(= 전일 고시분)과 같은 숫자로 보일 때 구분이 안 된다.
+          sub = "매매기준율 " + primary.date.slice(5) + " 고시";
           if (ecb && ecb.rows && ecb.rows.length) {
-            sub = "ECB " + rate(ecb.lastRate) + " (" + ecb.lastDate.slice(5) + ")";
+            sub += " · ECB " + rate(ecb.lastRate) + " (" + ecb.lastDate.slice(5) + ")";
           }
         } else if (ecb && ecb.rows && ecb.rows.length) {
           var st = FxStats.summary(ecb.rows);
@@ -796,6 +799,7 @@
     renderBuyList();
     renderSpreadSettings();
     renderRatesStatus();
+    renderLiveStatus();
   }
 
   // ---------------------------------------------------------------------
@@ -838,6 +842,70 @@
       $("ratesStatus").innerHTML = '<span class="loading">다시 받는 중...</span>';
       syncDomestic().then(renderRatesStatus);
     });
+
+    // --- 실시간 조회 Worker
+    $("liveUrl").value = FxDomestic.liveUrl();
+
+    $("liveForm").addEventListener("submit", function (e) {
+      e.preventDefault();
+      var url = ($("liveUrl").value || "").trim();
+      var box = $("liveStatus");
+      if (!url) {
+        Portfolio.setLiveUrl("");
+        renderLiveStatus();
+        return;
+      }
+      box.innerHTML = '<span class="loading">확인 중...</span>';
+      Promise.resolve()
+        .then(function () {
+          return FxDomestic.checkLive(url);
+        })
+        .then(
+          function () {
+            return FxDomestic.forceLive().then(function () {
+              bumpDomestic();
+              renderHeader();
+              setView(state.view);
+              renderLiveStatus();
+            });
+          },
+          function (err) {
+            box.innerHTML = '<span class="neg">' + esc(err.message) + "</span>";
+          }
+        );
+    });
+
+    $("liveFetch").addEventListener("click", function () {
+      if (!FxDomestic.liveEnabled()) {
+        $("liveStatus").innerHTML = '<span class="neg">먼저 Worker 주소를 저장하세요.</span>';
+        return;
+      }
+      $("liveStatus").innerHTML = '<span class="loading">조회 중...</span>';
+      FxDomestic.forceLive().then(function () {
+        bumpDomestic();
+        renderHeader();
+        setView(state.view);
+        renderLiveStatus();
+      });
+    });
+  }
+
+  function renderLiveStatus() {
+    var box = $("liveStatus");
+    if (!box) return;
+    if (!FxDomestic.liveEnabled()) {
+      box.innerHTML = "연결 전입니다. 예약 갱신이 밀리면 당일 고시가 늦게 들어옵니다.";
+      return;
+    }
+    var latest = FxDomestic.latestDate();
+    var fresh = latest === FxData.todayISO();
+    box.innerHTML =
+      '<span class="pos">연결됨</span> · 최신 고시일 <strong>' +
+      esc(latest || "—") +
+      "</strong>" +
+      (fresh
+        ? " (오늘 자 확보)"
+        : ' <span class="muted">— 아직 오늘 고시가 없습니다. 11시 이후라면 「지금 받기」를 눌러보세요.</span>');
   }
 
   function renderRatesStatus() {
