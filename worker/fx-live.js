@@ -119,6 +119,10 @@ export default {
         return json(await fetchProduct(target), 200, origin);
       }
 
+      if (path === "/v1/live") {
+        return json(await fetchLiveRates(), 200, origin);
+      }
+
       return json({ ok: false, error: "없는 경로입니다. /v1/recent, /v1/product, /v1/health 를 쓰세요." }, 404, origin);
     } catch (err) {
       const status = err && err.httpStatus ? err.httpStatus : 502;
@@ -126,6 +130,75 @@ export default {
     }
   },
 };
+
+// ---------------------------------------------------------------------------
+// 실시간 환율 (하나은행 고시회차)
+// ---------------------------------------------------------------------------
+// 매매기준율은 하루 한 번뿐이라 "지금 환율"로는 맞지 않다. 은행 고시환율은 하루에
+// 수십 회 갱신되고 모바일 환전도 그 최신 회차로 체결된다. 그래서 화면 상단의
+// '현재 환율'만 이 값으로 보여준다.
+//
+// 차트·백분위·평가손익·면세점 적용환율은 여전히 매매기준율(확정값)을 쓴다.
+// 하루 여러 번 바뀌는 값으로는 일별 시계열을 만들 수 없고, 면세점 규칙 자체가
+// 전일 '고시 매매기준율' 기준이기 때문이다.
+//
+// 주의: 네이버 금융의 비공개 엔드포인트라 언제든 바뀌거나 막힐 수 있다.
+// 실패하면 앱이 매매기준율로 돌아가도록 되어 있으니 화면이 깨지지는 않는다.
+
+const NAVER_FX = "https://api.stock.naver.com/marketindex/exchange/";
+const LIVE_CODES = { USD: "FX_USDKRW", JPY: "FX_JPYKRW" };
+const LIVE_TTL = 120; // 2분. 고시회차가 그보다 자주 바뀌지는 않는다.
+
+async function fetchLiveRates() {
+  const out = {};
+  const errors = [];
+
+  await Promise.all(
+    Object.keys(LIVE_CODES).map(async (code) => {
+      try {
+        const res = await fetch(NAVER_FX + LIVE_CODES[code], {
+          headers: {
+            "user-agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36",
+            accept: "application/json",
+          },
+          cf: { cacheTtl: LIVE_TTL, cacheEverything: true },
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const d = await res.json();
+        const rate = toNum(d.closePrice);
+        if (rate === null) throw new Error("closePrice 없음");
+        out[code] = {
+          rate,
+          // JPY는 네이버도 100엔 기준이라 앱 표기 단위와 그대로 맞는다.
+          change: toNumSigned(d.fluctuations),
+          changePct: toNumSigned(d.fluctuationsRatio),
+          at: d.localTradedAt || null,
+          marketStatus: d.marketStatus || null,
+        };
+      } catch (err) {
+        errors.push(`${code}: ${err.message}`);
+      }
+    })
+  );
+
+  if (!Object.keys(out).length) {
+    return { ok: false, error: `실시간 환율을 가져오지 못했습니다. ${errors.join(", ")}` };
+  }
+  return {
+    ok: true,
+    rates: out,
+    source: "하나은행 고시회차 (네이버 금융)",
+    partial: errors.length ? errors : undefined,
+  };
+}
+
+// 등락은 음수도 와야 하므로 toNum(양수만)과 따로 둔다.
+function toNumSigned(v) {
+  if (v === null || v === undefined) return null;
+  const n = Number(String(v).replace(/,/g, "").trim());
+  return Number.isFinite(n) ? n : null;
+}
 
 // ---------------------------------------------------------------------------
 // 면세점 상품 조회

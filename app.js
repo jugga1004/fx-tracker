@@ -108,6 +108,10 @@
       bumpDomestic();
       renderHeader();
       setView(state.view);
+      // 실시간 환율은 상단 표시용이라 늦게 붙어도 되고, 실패해도 무시한다.
+      FxDomestic.refreshLiveRates().then(function (changed) {
+        if (changed) renderHeader();
+      });
       return res;
     });
   }
@@ -330,7 +334,19 @@
         var delta = null;
         var sub = "";
 
-        if (dom.length) {
+        // 상단 '현재 환율'은 실시간(은행 고시회차)이 맞다. 매매기준율은 하루 한 번뿐이라
+        // 모바일 환전으로 실제 체결되는 값과 어긋난다.
+        // 단 차트·백분위·면세점은 확정된 매매기준율을 그대로 쓴다(아래 dom 분기).
+        var live = FxDomestic.liveRate(c);
+        if (live) {
+          domShown = true;
+          primary = { date: FxData.todayISO(), rate: live.rate };
+          if (isFinite(live.change)) {
+            delta = { abs: live.change, pct: isFinite(live.changePct) ? live.changePct : NaN };
+          }
+          sub = "실시간" + (live.at ? " " + String(live.at).slice(11, 16) : "");
+          if (dom.length) sub += " · 매매기준율 " + rate(dom[dom.length - 1].rate) + " (" + dom[dom.length - 1].date.slice(5) + ")";
+        } else if (dom.length) {
           // 국내 매매기준율이 있으면 그쪽을 대표값으로 쓴다. 전일 대비도
           // 반드시 같은 소스끼리 비교해야 해서 국내 값끼리만 뺀다.
           domShown = true;
@@ -399,11 +415,18 @@
     });
 
     var statusHtml = "";
+    var liveAny = Object.keys(FxData.CURRENCIES).some(function (c) { return !!FxDomestic.liveRate(c); });
     if (domShown) {
-      statusHtml =
-        "국내 매매기준율 <strong>" +
-        esc(FxDomestic.latestDate() || "—") +
-        "</strong> (한국수출입은행) · 차트·통계는 ECB 시계열 기준";
+      // 상단은 실시간, 아래는 확정값 — 이 구분이 안 보이면 왜 숫자가 다른지 혼란스럽다.
+      statusHtml = liveAny
+        ? "위 환율은 <strong>실시간</strong> (" +
+          esc(FxDomestic.liveRatesSource() || "은행 고시회차") +
+          ") · 차트·면세점은 <strong>확정 고시</strong> 기준 (매매기준율 " +
+          esc(FxDomestic.latestDate() || "—") +
+          ")"
+        : "국내 매매기준율 <strong>" +
+          esc(FxDomestic.latestDate() || "—") +
+          "</strong> (한국수출입은행) · 차트·통계는 ECB 시계열 기준";
     } else if (ecbAny) {
       statusHtml = "기준일 <strong>" + esc(ecbAny.lastDate) + "</strong> · ECB 공시 기준(은행 고시환율과 다름)";
     }

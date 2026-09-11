@@ -99,7 +99,15 @@
 
     return fetch(bust, { cache: "no-store", signal: ctrl ? ctrl.signal : undefined })
       .then(function (res) {
-        if (!res.ok) throw new Error("환율 파일을 받지 못했습니다 (HTTP " + res.status + ")");
+        // 이 함수는 환율 파일·Worker 여러 경로에 쓰인다. "환율 파일"이라고 못 박으면
+        // 상품 조회가 404일 때 엉뚱한 안내가 나간다.
+        if (res.status === 404) {
+          throw new Error(
+            "요청한 경로가 없습니다 (404). Worker에 최신 코드가 배포됐는지 확인해주세요 — " +
+              "상품 가져오기는 worker/fx-live.js의 새 버전이 필요합니다."
+          );
+        }
+        if (!res.ok) throw new Error("응답을 받지 못했습니다 (HTTP " + res.status + ")");
         return res.json();
       })
       .then(
@@ -110,7 +118,7 @@
         function (err) {
           done();
           if (err && err.name === "AbortError") throw new Error("응답이 너무 느립니다 (15초 초과).");
-          if (err instanceof SyntaxError) throw new Error("환율 파일이 JSON 형식이 아닙니다.");
+          if (err instanceof SyntaxError) throw new Error("응답이 JSON 형식이 아닙니다.");
           throw err;
         }
       );
@@ -239,6 +247,47 @@
   // 「지금 받기」 버튼용. 시간·중복 조건을 무시하고 강제로 한 번 조회한다.
   function forceLive() {
     return topUpFromLive(true);
+  }
+
+  // ---------------------------------------------------------------------
+  // 실시간 환율 (화면 상단 '현재 환율' 전용)
+  // ---------------------------------------------------------------------
+  // 은행 고시환율은 하루 수십 회 바뀌고 모바일 환전도 그 값으로 체결된다.
+  // 매매기준율(하루 1회)만 보여주면 "지금 환율"과 실제 거래가 어긋난다.
+  //
+  // 다만 이 값은 상단 표시에만 쓴다. 차트·백분위·면세점 적용환율은 확정된
+  // 매매기준율을 그대로 쓴다 — 하루에 여러 번 바뀌는 값으로는 일별 시계열을
+  // 만들 수 없고, 면세점 규칙 자체가 '전일 고시 매매기준율' 기준이다.
+  //
+  // 메모리에만 둔다. 새로고침하면 다시 받는 게 맞는 성격의 값이다.
+  var liveRates = null;
+  var LIVE_RATES_TTL_MS = 2 * 60 * 1000;
+  var liveRatesAt = 0;
+
+  function liveRate(code) {
+    return liveRates && liveRates[code] ? liveRates[code] : null;
+  }
+
+  // 실패해도 조용히 넘어간다 — 상단이 매매기준율로 표시될 뿐이다.
+  function refreshLiveRates(force) {
+    if (!liveEnabled()) return Promise.resolve(false);
+    if (!force && liveRates && Date.now() - liveRatesAt < LIVE_RATES_TTL_MS) return Promise.resolve(false);
+    return fetchJson(liveUrl() + "/v1/live")
+      .then(function (body) {
+        if (!body || body.ok === false || !body.rates) throw new Error("형식 오류");
+        liveRates = body.rates;
+        liveRatesAt = Date.now();
+        liveSource = body.source || null;
+        return true;
+      })
+      .catch(function () {
+        return false;
+      });
+  }
+
+  var liveSource = null;
+  function liveRatesSource() {
+    return liveSource;
   }
 
   // 면세점 상품 페이지에서 상품명·달러가를 가져온다. 브라우저는 다른 도메인을
@@ -373,6 +422,9 @@
     checkLive: checkLive,
     forceLive: forceLive,
     fetchProduct: fetchProduct,
+    liveRate: liveRate,
+    refreshLiveRates: refreshLiveRates,
+    liveRatesSource: liveRatesSource,
     count: count,
     clear: clear,
     SOURCE_LABEL: "한국수출입은행 매매기준율",
