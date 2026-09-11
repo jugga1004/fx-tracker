@@ -166,6 +166,17 @@
     return !isFinite(v) ? "" : v > 0 ? "pos" : v < 0 ? "neg" : "";
   }
 
+  // 야후는 UTC ISO 문자열을 준다. 문자열을 그냥 잘라 쓰면 9시간 어긋나므로
+  // Date로 파싱해 브라우저 현지시각(= 사용자에겐 KST)으로 찍는다.
+  function hhmmLocal(iso) {
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    var p = function (n) {
+      return n < 10 ? "0" + n : String(n);
+    };
+    return p(d.getHours()) + ":" + p(d.getMinutes());
+  }
+
   // ---------------------------------------------------------------------
   // 부팅
   // ---------------------------------------------------------------------
@@ -344,7 +355,7 @@
           if (isFinite(live.change)) {
             delta = { abs: live.change, pct: isFinite(live.changePct) ? live.changePct : NaN };
           }
-          sub = "실시간" + (live.at ? " " + String(live.at).slice(11, 16) : "");
+          sub = "실시간" + (live.at ? " " + hhmmLocal(live.at) : "");
           if (dom.length) sub += " · 매매기준율 " + rate(dom[dom.length - 1].rate) + " (" + dom[dom.length - 1].date.slice(5) + ")";
         } else if (dom.length) {
           // 국내 매매기준율이 있으면 그쪽을 대표값으로 쓴다. 전일 대비도
