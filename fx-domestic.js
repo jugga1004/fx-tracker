@@ -241,6 +241,18 @@
     return topUpFromLive(true);
   }
 
+  // 면세점 상품 페이지에서 상품명·달러가를 가져온다. 브라우저는 다른 도메인을
+  // 못 읽으므로(CORS) Worker가 대신 읽어준다. 실패는 그대로 던져 화면에 사유를 보여준다.
+  function fetchProduct(url) {
+    if (!liveEnabled()) throw new Error("실시간 조회 Worker가 연결돼 있어야 상품 정보를 가져올 수 있습니다.");
+    var clean = String(url || "").trim();
+    if (!clean) throw new Error("상품 링크를 입력해주세요.");
+    return fetchJson(liveUrl() + "/v1/product?url=" + encodeURIComponent(clean)).then(function (body) {
+      if (!body || body.ok === false) throw new Error((body && body.error) || "상품 정보를 가져오지 못했습니다.");
+      return body;
+    });
+  }
+
   // 주소를 바꿀 때만 쓰는 검증용. 이쪽은 실패를 그대로 던진다.
   function check(url) {
     var clean = String(url || "").trim();
@@ -360,6 +372,7 @@
     liveEnabled: liveEnabled,
     checkLive: checkLive,
     forceLive: forceLive,
+    fetchProduct: fetchProduct,
     count: count,
     clear: clear,
     SOURCE_LABEL: "한국수출입은행 매매기준율",

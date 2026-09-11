@@ -114,7 +114,12 @@ export default {
         );
       }
 
-      return json({ ok: false, error: "없는 경로입니다. /v1/recent 또는 /v1/health 를 쓰세요." }, 404, origin);
+      if (path === "/v1/product") {
+        const target = new URL(request.url).searchParams.get("url") || "";
+        return json(await fetchProduct(target), 200, origin);
+      }
+
+      return json({ ok: false, error: "없는 경로입니다. /v1/recent, /v1/product, /v1/health 를 쓰세요." }, 404, origin);
     } catch (err) {
       const status = err && err.httpStatus ? err.httpStatus : 502;
       return json({ ok: false, error: String((err && err.message) || err) }, status, origin);
@@ -123,7 +128,108 @@ export default {
 };
 
 // ---------------------------------------------------------------------------
-// 조회
+// 면세점 상품 조회
+// ---------------------------------------------------------------------------
+// 브라우저는 다른 도메인을 못 읽으므로(CORS) 여기서 대신 읽어 상품명과 달러가를 뽑는다.
+//
+// 아무 주소나 받아주면 이 Worker가 열린 프록시가 되어 남의 서버를 찌르는 데 쓰일 수 있다.
+// 그래서 면세점 도메인만 허용한다.
+const ALLOWED_HOSTS = [
+  "kor.lottedfs.com",
+  "www.lottedfs.com",
+  "www.shilladfs.com",
+  "m.shilladfs.com",
+  "www.ssgdfs.com",
+  "www.hddfs.com",
+];
+
+const PRODUCT_TTL = 60 * 30; // 가격은 자주 안 바뀐다. 30분 캐시.
+
+async function fetchProduct(rawUrl) {
+  let u;
+  try {
+    u = new URL(rawUrl);
+  } catch {
+    return { ok: false, error: "주소 형식이 올바르지 않습니다." };
+  }
+  if (u.protocol !== "https:" && u.protocol !== "http:") {
+    return { ok: false, error: "http/https 주소만 됩니다." };
+  }
+  if (!ALLOWED_HOSTS.includes(u.hostname)) {
+    return {
+      ok: false,
+      error: `지원하지 않는 사이트입니다(${u.hostname}). 현재는 롯데·신라·신세계·현대 면세점만 읽을 수 있습니다.`,
+    };
+  }
+
+  let res;
+  try {
+    res = await fetch(u.toString(), {
+      // 봇으로 차단당하지 않게 일반 브라우저처럼 요청한다.
+      headers: {
+        "user-agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36",
+        accept: "text/html,application/xhtml+xml",
+        "accept-language": "ko-KR,ko;q=0.9",
+      },
+      cf: { cacheTtl: PRODUCT_TTL, cacheEverything: true },
+    });
+  } catch (err) {
+    return { ok: false, error: `상품 페이지에 연결하지 못했습니다: ${err.message}` };
+  }
+  if (!res.ok) return { ok: false, error: `상품 페이지 응답 오류 (HTTP ${res.status})` };
+
+  const html = await res.text();
+  const parsed = parseProduct(html, u.hostname);
+  if (!parsed.usd && !parsed.name) {
+    return { ok: false, error: "이 페이지에서 상품 정보를 찾지 못했습니다. 상품 상세 페이지 주소가 맞는지 확인해주세요." };
+  }
+  return { ok: true, url: u.toString(), host: u.hostname, ...parsed };
+}
+
+function parseProduct(html, host) {
+  // 상품명: og:title 이 가장 안정적이다(속성 순서가 뒤바뀌는 경우가 있어 양쪽 다 본다).
+  let name =
+    pick(html, /<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i) ||
+    pick(html, /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:title["']/i) ||
+    "";
+  name = decodeEntities(name).trim();
+  // "롯데면세점" 같은 사이트명만 온 경우는 상품명이 아니다.
+  if (/^(롯데면세점|신라면세점|신세계면세점|현대면세점)$/.test(name)) name = "";
+
+  const brand = decodeEntities(pick(html, /"brndNm"\s*:\s*"([^"]+)"/) || "").trim();
+
+  // 달러 표시가. 롯데는 saleUntPrc 가 달러, saleUntPrcGlbl 이 원화 환산가다.
+  let usd = toNum(pick(html, /"saleUntPrc"\s*:\s*"?([0-9][0-9,]*\.?[0-9]*)"?/));
+  if (usd === null) usd = toNum(pick(html, /"dutyFreePrice"\s*:\s*"?([0-9][0-9,]*\.?[0-9]*)"?/));
+  if (usd === null) usd = toNum(pick(html, /"salePrice"\s*:\s*"?([0-9][0-9,]*\.?[0-9]*)"?/));
+
+  return { name, brand, usd, parsedFrom: host };
+}
+
+function pick(s, re) {
+  const m = s.match(re);
+  return m ? m[1] : null;
+}
+
+function toNum(v) {
+  if (v === null || v === undefined) return null;
+  const n = Number(String(v).replace(/,/g, "").trim());
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function decodeEntities(s) {
+  return String(s)
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, " ");
+}
+
+// ---------------------------------------------------------------------------
+// 환율 조회
 // ---------------------------------------------------------------------------
 
 async function fetchOneCached(iso, env, ctx) {

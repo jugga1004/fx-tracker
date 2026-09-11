@@ -1330,6 +1330,35 @@
       }
     });
 
+    // 링크를 붙여넣고 누르면 Worker가 상품 페이지를 읽어 이름·달러가를 채워준다.
+    $("dfItemFetch").addEventListener("click", function () {
+      var box = $("dfItemError");
+      var url = ($("dfItemUrl").value || "").trim();
+      box.hidden = true;
+      $("dfItemPreview").innerHTML = '<span class="loading">상품 정보를 가져오는 중...</span>';
+      Promise.resolve()
+        .then(function () {
+          return FxDomestic.fetchProduct(url);
+        })
+        .then(
+          function (p) {
+            // 가져온 값은 그대로 덮어쓰되, 사용자가 이미 적어둔 이름은 건드리지 않는다.
+            if (p.usd) $("dfItemUsd").value = p.usd;
+            if (p.name && !$("dfItemName").value.trim()) $("dfItemName").value = p.name;
+            updateDfItemPreview();
+            if (!p.usd) {
+              box.textContent = "상품명은 가져왔지만 가격을 못 찾았습니다. 가격은 직접 입력해주세요.";
+              box.hidden = false;
+            }
+          },
+          function (err) {
+            $("dfItemPreview").textContent = "";
+            box.textContent = err.message;
+            box.hidden = false;
+          }
+        );
+    });
+
     $("dfItems").addEventListener("click", function (e) {
       var btn = e.target.closest("button[data-del]");
       if (!btn) return;
@@ -1529,24 +1558,22 @@
       return;
     }
 
+    // 환율이 없어도 목록은 반드시 그린다. 내가 입력한 데이터가 사라진 것처럼 보이면 안 된다.
+    // 원화가만 '—'로 비우고, 왜 비었는지는 표 아래에 적는다.
     var todayApplied = dfTodayRate();
-    if (!todayApplied) {
-      box.innerHTML =
-        '<p class="muted small mt">적용환율이 있어야 원화가를 계산할 수 있습니다. ' +
-        "「환율 갱신」이 한 번 실행되면 자동으로 채워집니다.</p>";
-      return;
-    }
     var tomorrowApplied = FxDomestic.appliedTomorrow("USD");
-    var yesterdayApplied = FxDomestic.appliedOn("USD", FxData.shiftDays(FxData.todayISO(), -1));
+    var yesterdayApplied = todayApplied
+      ? FxDomestic.appliedOn("USD", FxData.shiftDays(FxData.todayISO(), -1))
+      : null;
 
     var totalUsd = 0;
     var rowsHtml = items
       .map(function (it) {
         totalUsd += it.usd;
         var yesterdayKrw = yesterdayApplied ? it.usd * yesterdayApplied.rate : NaN;
-        var todayKrw = it.usd * todayApplied.rate;
+        var todayKrw = todayApplied ? it.usd * todayApplied.rate : NaN;
         var tomorrowKrw = tomorrowApplied ? it.usd * tomorrowApplied.rate : NaN;
-        var d = isFinite(tomorrowKrw) ? tomorrowKrw - todayKrw : NaN;
+        var d = isFinite(tomorrowKrw) && isFinite(todayKrw) ? tomorrowKrw - todayKrw : NaN;
         var label = it.name ? esc(it.name) : '<span class="muted">이름 없음</span>';
         return (
           "<tr>" +
@@ -1563,7 +1590,7 @@
           (isFinite(yesterdayKrw) ? won(yesterdayKrw) : "—") +
           "</td>" +
           "<td>" +
-          won(todayKrw) +
+          (isFinite(todayKrw) ? won(todayKrw) : '<span class="muted">—</span>') +
           "</td>" +
           "<td>" +
           (isFinite(tomorrowKrw) ? won(tomorrowKrw) : '<span class="muted">미정</span>') +
@@ -1582,9 +1609,9 @@
       .join("");
 
     var totalYesterday = yesterdayApplied ? totalUsd * yesterdayApplied.rate : NaN;
-    var totalToday = totalUsd * todayApplied.rate;
+    var totalToday = todayApplied ? totalUsd * todayApplied.rate : NaN;
     var totalTomorrow = tomorrowApplied ? totalUsd * tomorrowApplied.rate : NaN;
-    var totalDiff = isFinite(totalTomorrow) ? totalTomorrow - totalToday : NaN;
+    var totalDiff = isFinite(totalTomorrow) && isFinite(totalToday) ? totalTomorrow - totalToday : NaN;
 
     // 합계 행은 tfoot에 둬서 상품이 많아져도 눈에 띄게 한다.
     var footHtml =
@@ -1595,7 +1622,7 @@
       '</td><td class="muted">' +
       (isFinite(totalYesterday) ? won(totalYesterday) : "—") +
       "</td><td><strong>" +
-      won(totalToday) +
+      (isFinite(totalToday) ? won(totalToday) : "&mdash;") +
       "</strong></td><td><strong>" +
       (isFinite(totalTomorrow) ? won(totalTomorrow) : '<span class="muted">미정</span>') +
       '</strong></td><td class="' +
@@ -1605,7 +1632,11 @@
       "</strong></td><td></td></tr>";
 
     var verdict = "";
-    if (isFinite(totalDiff) && Math.round(totalDiff) !== 0) {
+    if (!todayApplied) {
+      verdict =
+        '<p class="muted small mt">적용환율이 아직 없어 원화가를 못 채웠습니다. ' +
+        "등록한 상품은 그대로 남아 있으며, 환율이 들어오면 자동으로 계산됩니다.</p>";
+    } else if (isFinite(totalDiff) && Math.round(totalDiff) !== 0) {
       verdict =
         '<p class="note mt">등록한 ' +
         items.length +
