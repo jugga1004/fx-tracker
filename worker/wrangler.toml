@@ -10,6 +10,12 @@ name = "fx-live"
 main = "fx-live.js"
 compatibility_date = "2026-09-11"
 
+# wrangler deploy는 기본적으로 "설정 파일에 없는 바인딩은 지운다"로 동작한다.
+# 그래서 대시보드에서 KOREAEXIM_KEY를 저장해도 다음 빌드가 돌면서 날아갔다.
+# keep_vars는 설정에 없는 변수·암호를 건드리지 말라는 뜻이다.
+# (인증키는 여전히 대시보드 암호로만 두고, 저장소에는 절대 넣지 않는다)
+keep_vars = true
+
 # 앱이 올라간 주소에서만 호출을 허용한다. 비워두거나 지우면 "*"(전체 허용)가 된다.
 [vars]
 ALLOWED_ORIGIN = "https://jugga1004.github.io"
