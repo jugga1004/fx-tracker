@@ -1,0 +1,15 @@
+# Cloudflare가 이 저장소에서 무엇을 배포할지 알려주는 설정.
+# Worker 빌드 설정에서 "루트 디렉터리(Root directory)"를 worker 로 지정하면
+# Cloudflare가 이 파일을 찾아 fx-live.js 를 배포한다.
+#
+# 인증키는 여기 적지 말 것. 대시보드의
+#   Settings → Variables and Secrets → Add → Type: Secret
+# 에 이름 KOREAEXIM_KEY 로 등록한다. (저장소가 public이라 코드에 넣으면 그대로 노출된다)
+
+name = "fx-live"
+main = "fx-live.js"
+compatibility_date = "2026-09-11"
+
+# 앱이 올라간 주소에서만 호출을 허용한다. 비워두거나 지우면 "*"(전체 허용)가 된다.
+[vars]
+ALLOWED_ORIGIN = "https://jugga1004.github.io"
