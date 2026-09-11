@@ -120,7 +120,10 @@ export default {
       }
 
       if (path === "/v1/live") {
-        return json(await fetchLiveRates(), 200, origin);
+        // ?debug=1 이면 업스트림 원문 일부를 함께 돌려준다. 소스가 막히거나
+        // 응답 형식이 바뀌었을 때 추측하지 않고 바로 확인하기 위한 것.
+        const debug = new URL(request.url).searchParams.get("debug") === "1";
+        return json(await fetchLiveRates(debug), 200, origin);
       }
 
       return json({ ok: false, error: "없는 경로입니다. /v1/recent, /v1/product, /v1/health 를 쓰세요." }, 404, origin);
@@ -149,48 +152,110 @@ const NAVER_FX = "https://api.stock.naver.com/marketindex/exchange/";
 const LIVE_CODES = { USD: "FX_USDKRW", JPY: "FX_JPYKRW" };
 const LIVE_TTL = 120; // 2분. 고시회차가 그보다 자주 바뀌지는 않는다.
 
-async function fetchLiveRates() {
-  const out = {};
-  const errors = [];
+// 소스가 하나면 그게 막히는 순간 기능이 죽는다. 네이버(은행 고시회차)를 먼저 보고,
+// 안 되면 야후(은행 간 시장 중간환율)로 넘어간다. 실측상 두 값 차이는 크지 않다
+// (2026-09-11 17시: 네이버 1,345.0 vs 야후 1,344.84).
+const YAHOO_FX = "https://query1.finance.yahoo.com/v8/finance/chart/";
+const YAHOO_CODES = { USD: "KRW=X", JPY: "JPYKRW=X" };
+// 야후는 JPY를 1엔당으로 준다. 앱 표기는 100엔 기준이라 맞춰준다.
+const YAHOO_UNIT = { USD: 1, JPY: 100 };
 
+const BROWSERISH = {
+  "user-agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36",
+  accept: "application/json,text/plain,*/*",
+  "accept-language": "ko-KR,ko;q=0.9,en;q=0.8",
+};
+
+async function fetchLiveRates(debug) {
+  const errors = [];
+  const raw = {};
+
+  let out = await fromNaver(errors, debug ? raw : null);
+  let source = "하나은행 고시회차 (네이버 금융)";
+
+  if (!Object.keys(out).length) {
+    out = await fromYahoo(errors, debug ? raw : null);
+    source = "은행 간 시장 중간환율 (Yahoo Finance)";
+  }
+
+  if (!Object.keys(out).length) {
+    return {
+      ok: false,
+      error: `실시간 환율을 가져오지 못했습니다. ${errors.join(" / ")}`,
+      debug: debug ? raw : undefined,
+    };
+  }
+  return { ok: true, rates: out, source, notes: errors.length ? errors : undefined, debug: debug ? raw : undefined };
+}
+
+async function fromNaver(errors, raw) {
+  const out = {};
   await Promise.all(
     Object.keys(LIVE_CODES).map(async (code) => {
       try {
         const res = await fetch(NAVER_FX + LIVE_CODES[code], {
-          headers: {
-            "user-agent":
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36",
-            accept: "application/json",
-          },
+          // referer가 없으면 다른 응답을 주는 경우가 있어 붙여둔다.
+          headers: { ...BROWSERISH, referer: "https://m.stock.naver.com/" },
           cf: { cacheTtl: LIVE_TTL, cacheEverything: true },
         });
+        const text = await res.text();
+        if (raw) raw["naver_" + code] = { status: res.status, body: text.slice(0, 400) };
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const d = await res.json();
-        const rate = toNum(d.closePrice);
+
+        const d = JSON.parse(text);
+        // 응답 껍데기가 바뀌는 경우가 있어 몇 군데를 훑는다.
+        const node = d && (d.closePrice !== undefined ? d : d.result || d.data || d.marketIndex || {});
+        const rate = toNum(node.closePrice);
         if (rate === null) throw new Error("closePrice 없음");
         out[code] = {
           rate,
-          // JPY는 네이버도 100엔 기준이라 앱 표기 단위와 그대로 맞는다.
-          change: toNumSigned(d.fluctuations),
-          changePct: toNumSigned(d.fluctuationsRatio),
-          at: d.localTradedAt || null,
-          marketStatus: d.marketStatus || null,
+          change: toNumSigned(node.fluctuations),
+          changePct: toNumSigned(node.fluctuationsRatio),
+          at: node.localTradedAt || null,
         };
       } catch (err) {
-        errors.push(`${code}: ${err.message}`);
+        errors.push(`네이버 ${code}: ${err.message}`);
       }
     })
   );
+  return out;
+}
 
-  if (!Object.keys(out).length) {
-    return { ok: false, error: `실시간 환율을 가져오지 못했습니다. ${errors.join(", ")}` };
-  }
-  return {
-    ok: true,
-    rates: out,
-    source: "하나은행 고시회차 (네이버 금융)",
-    partial: errors.length ? errors : undefined,
-  };
+async function fromYahoo(errors, raw) {
+  const out = {};
+  await Promise.all(
+    Object.keys(YAHOO_CODES).map(async (code) => {
+      try {
+        const res = await fetch(`${YAHOO_FX}${YAHOO_CODES[code]}?interval=1d&range=1d`, {
+          headers: BROWSERISH,
+          cf: { cacheTtl: LIVE_TTL, cacheEverything: true },
+        });
+        const text = await res.text();
+        if (raw) raw["yahoo_" + code] = { status: res.status, body: text.slice(0, 300) };
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        const meta = JSON.parse(text)?.chart?.result?.[0]?.meta;
+        const price = toNum(meta && meta.regularMarketPrice);
+        if (price === null) throw new Error("regularMarketPrice 없음");
+
+        const unit = YAHOO_UNIT[code];
+        const rate = price * unit;
+        const prev = toNum(meta.previousClose ?? meta.chartPreviousClose);
+        const prevScaled = prev === null ? null : prev * unit;
+
+        out[code] = {
+          rate,
+          change: prevScaled === null ? null : rate - prevScaled,
+          changePct: prevScaled ? ((rate - prevScaled) / prevScaled) * 100 : null,
+          at: meta.regularMarketTime ? new Date(meta.regularMarketTime * 1000).toISOString() : null,
+        };
+      } catch (err) {
+        errors.push(`야후 ${code}: ${err.message}`);
+      }
+    })
+  );
+  return out;
 }
 
 // 등락은 음수도 와야 하므로 toNum(양수만)과 따로 둔다.
