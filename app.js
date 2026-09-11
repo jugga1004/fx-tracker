@@ -1250,9 +1250,10 @@
       var box = $("dfItemError");
       box.hidden = true;
       try {
-        Portfolio.addItem({ name: $("dfItemName").value, usd: $("dfItemUsd").value });
+        Portfolio.addItem({ name: $("dfItemName").value, usd: $("dfItemUsd").value, url: $("dfItemUrl").value });
         $("dfItemName").value = "";
         $("dfItemUsd").value = "";
+        $("dfItemUrl").value = "";
         updateDfItemPreview();
         renderDfItems();
       } catch (err) {
@@ -1468,21 +1469,30 @@
       return;
     }
     var tomorrowApplied = FxDomestic.appliedTomorrow("USD");
+    var yesterdayApplied = FxDomestic.appliedOn("USD", FxData.shiftDays(FxData.todayISO(), -1));
 
     var totalUsd = 0;
     var rowsHtml = items
       .map(function (it) {
         totalUsd += it.usd;
+        var yesterdayKrw = yesterdayApplied ? it.usd * yesterdayApplied.rate : NaN;
         var todayKrw = it.usd * todayApplied.rate;
         var tomorrowKrw = tomorrowApplied ? it.usd * tomorrowApplied.rate : NaN;
         var d = isFinite(tomorrowKrw) ? tomorrowKrw - todayKrw : NaN;
+        var label = it.name ? esc(it.name) : '<span class="muted">이름 없음</span>';
         return (
           "<tr>" +
           "<th>" +
-          (it.name ? esc(it.name) : '<span class="muted">이름 없음</span>') +
+          // 링크가 있으면 상품명을 그대로 링크로 만든다. 이름이 없으면 '링크'라고만.
+          (it.url
+            ? '<a href="' + esc(it.url) + '" target="_blank" rel="noopener noreferrer">' + label + " ↗</a>"
+            : label) +
           "</th>" +
           "<td>$" +
           num(it.usd, 2) +
+          "</td>" +
+          '<td class="muted">' +
+          (isFinite(yesterdayKrw) ? won(yesterdayKrw) : "—") +
           "</td>" +
           "<td>" +
           won(todayKrw) +
@@ -1503,6 +1513,7 @@
       })
       .join("");
 
+    var totalYesterday = yesterdayApplied ? totalUsd * yesterdayApplied.rate : NaN;
     var totalToday = totalUsd * todayApplied.rate;
     var totalTomorrow = tomorrowApplied ? totalUsd * tomorrowApplied.rate : NaN;
     var totalDiff = isFinite(totalTomorrow) ? totalTomorrow - totalToday : NaN;
@@ -1513,6 +1524,8 @@
       items.length +
       "건</th><td>$" +
       num(totalUsd, 2) +
+      '</td><td class="muted">' +
+      (isFinite(totalYesterday) ? won(totalYesterday) : "—") +
       "</td><td><strong>" +
       won(totalToday) +
       "</strong></td><td><strong>" +
@@ -1539,7 +1552,7 @@
 
     box.innerHTML =
       '<div class="table-scroll mt"><table class="data-table">' +
-      "<thead><tr><th>상품</th><th>달러</th><th>오늘</th><th>내일</th><th>차이</th><th></th></tr></thead>" +
+      "<thead><tr><th>상품</th><th>달러</th><th>어제</th><th>오늘</th><th>내일</th><th>내일−오늘</th><th></th></tr></thead>" +
       "<tbody>" +
       rowsHtml +
       "</tbody><tfoot>" +

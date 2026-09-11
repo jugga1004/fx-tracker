@@ -402,10 +402,14 @@
     var s = load();
     var usd = Number(rec.usd);
     if (!(usd > 0)) throw new Error("상품 가격은 0보다 커야 합니다.");
+    var url = String(rec.url || "").trim();
+    // 링크는 화면에서 새 창으로 여는 데만 쓴다. javascript: 같은 스킴이 끼어들지 않게 막는다.
+    if (url && !/^https?:\/\//i.test(url)) throw new Error("상품 링크는 http:// 또는 https:// 로 시작해야 합니다.");
     s.items.push({
       id: uid(),
       name: String(rec.name || "").trim(),
       usd: usd,
+      url: url,
     });
     save();
     return s.items;
