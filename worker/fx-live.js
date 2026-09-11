@@ -19,6 +19,8 @@
  *
  * 라우트
  *   GET /v1/recent?days=5   최근 영업일들의 매매기준율 (기본 5일, 최대 10)
+ *   GET /v1/live            지금 환율 (화면 상단 '현재 환율' 전용). ?debug=1 로 원문 확인
+ *   GET /v1/product?url=…   면세점 상품 페이지에서 상품명·달러가 추출
  *   GET /v1/health          키 설정 여부만 확인 (키 값은 절대 노출 안 함)
  *
  * 환경변수
@@ -135,9 +137,9 @@ export default {
 };
 
 // ---------------------------------------------------------------------------
-// 실시간 환율 (하나은행 고시회차)
+// 실시간 환율
 // ---------------------------------------------------------------------------
-// 매매기준율은 하루 한 번뿐이라 "지금 환율"로는 맞지 않다. 은행 고시환율은 하루에
+// 매매기준율은 하루 한 번뿐이라 "지금 환율"로는 맞지 않다. 은행 고시환율은 하루
 // 수십 회 갱신되고 모바일 환전도 그 최신 회차로 체결된다. 그래서 화면 상단의
 // '현재 환율'만 이 값으로 보여준다.
 //
@@ -145,94 +147,36 @@ export default {
 // 하루 여러 번 바뀌는 값으로는 일별 시계열을 만들 수 없고, 면세점 규칙 자체가
 // 전일 '고시 매매기준율' 기준이기 때문이다.
 //
-// 주의: 네이버 금융의 비공개 엔드포인트라 언제든 바뀌거나 막힐 수 있다.
-// 실패하면 앱이 매매기준율로 돌아가도록 되어 있으니 화면이 깨지지는 않는다.
-
-const NAVER_FX = "https://api.stock.naver.com/marketindex/exchange/";
-const LIVE_CODES = { USD: "FX_USDKRW", JPY: "FX_JPYKRW" };
-const LIVE_TTL = 120; // 2분. 고시회차가 그보다 자주 바뀌지는 않는다.
-
-// 소스가 하나면 그게 막히는 순간 기능이 죽는다. 네이버(은행 고시회차)를 먼저 보고,
-// 안 되면 야후(은행 간 시장 중간환율)로 넘어간다. 실측상 두 값 차이는 크지 않다
-// (2026-09-11 17시: 네이버 1,345.0 vs 야후 1,344.84).
+// 소스 선택 (2026-09-11 실측):
+//   네이버 금융(하나은행 고시회차)은 내 PC에서는 되는데 Cloudflare에서 온 요청에는
+//   closePrice가 없는 응답을 준다. 데이터센터 IP를 막는 것으로 보인다. 그래서 제외했다.
+//   야후는 Worker에서 정상 동작하고 값 차이도 작다 — 같은 시점에
+//   네이버 1,345.00 vs 야후 1,344.84 (0.16원). 은행 고시가 아니라 은행 간 시장
+//   중간환율이라는 점은 화면에 밝힌다.
 const YAHOO_FX = "https://query1.finance.yahoo.com/v8/finance/chart/";
 const YAHOO_CODES = { USD: "KRW=X", JPY: "JPYKRW=X" };
 // 야후는 JPY를 1엔당으로 준다. 앱 표기는 100엔 기준이라 맞춰준다.
 const YAHOO_UNIT = { USD: 1, JPY: 100 };
-
-const BROWSERISH = {
-  "user-agent":
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36",
-  accept: "application/json,text/plain,*/*",
-  "accept-language": "ko-KR,ko;q=0.9,en;q=0.8",
-};
+const LIVE_TTL = 120; // 2분. 그보다 자주 볼 이유가 없다.
 
 async function fetchLiveRates(debug) {
+  const out = {};
   const errors = [];
   const raw = {};
 
-  let out = await fromNaver(errors, debug ? raw : null);
-  let source = "하나은행 고시회차 (네이버 금융)";
-
-  if (!Object.keys(out).length) {
-    out = await fromYahoo(errors, debug ? raw : null);
-    source = "은행 간 시장 중간환율 (Yahoo Finance)";
-  }
-
-  if (!Object.keys(out).length) {
-    return {
-      ok: false,
-      error: `실시간 환율을 가져오지 못했습니다. ${errors.join(" / ")}`,
-      debug: debug ? raw : undefined,
-    };
-  }
-  return { ok: true, rates: out, source, notes: errors.length ? errors : undefined, debug: debug ? raw : undefined };
-}
-
-async function fromNaver(errors, raw) {
-  const out = {};
-  await Promise.all(
-    Object.keys(LIVE_CODES).map(async (code) => {
-      try {
-        const res = await fetch(NAVER_FX + LIVE_CODES[code], {
-          // referer가 없으면 다른 응답을 주는 경우가 있어 붙여둔다.
-          headers: { ...BROWSERISH, referer: "https://m.stock.naver.com/" },
-          cf: { cacheTtl: LIVE_TTL, cacheEverything: true },
-        });
-        const text = await res.text();
-        if (raw) raw["naver_" + code] = { status: res.status, body: text.slice(0, 400) };
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-        const d = JSON.parse(text);
-        // 응답 껍데기가 바뀌는 경우가 있어 몇 군데를 훑는다.
-        const node = d && (d.closePrice !== undefined ? d : d.result || d.data || d.marketIndex || {});
-        const rate = toNum(node.closePrice);
-        if (rate === null) throw new Error("closePrice 없음");
-        out[code] = {
-          rate,
-          change: toNumSigned(node.fluctuations),
-          changePct: toNumSigned(node.fluctuationsRatio),
-          at: node.localTradedAt || null,
-        };
-      } catch (err) {
-        errors.push(`네이버 ${code}: ${err.message}`);
-      }
-    })
-  );
-  return out;
-}
-
-async function fromYahoo(errors, raw) {
-  const out = {};
   await Promise.all(
     Object.keys(YAHOO_CODES).map(async (code) => {
       try {
-        const res = await fetch(`${YAHOO_FX}${YAHOO_CODES[code]}?interval=1d&range=1d`, {
-          headers: BROWSERISH,
+        const res = await fetch(`${YAHOO_FX}${YAHOO_CODES[code]}?interval=1d&range=5d`, {
+          headers: {
+            "user-agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36",
+            accept: "application/json",
+          },
           cf: { cacheTtl: LIVE_TTL, cacheEverything: true },
         });
         const text = await res.text();
-        if (raw) raw["yahoo_" + code] = { status: res.status, body: text.slice(0, 300) };
+        if (debug) raw[code] = { status: res.status, body: text.slice(0, 300) };
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
         const meta = JSON.parse(text)?.chart?.result?.[0]?.meta;
@@ -241,28 +185,36 @@ async function fromYahoo(errors, raw) {
 
         const unit = YAHOO_UNIT[code];
         const rate = price * unit;
-        const prev = toNum(meta.previousClose ?? meta.chartPreviousClose);
+        // previousClose가 없는 경우가 있어 chartPreviousClose로 떨어진다.
+        const prev = toNum(meta.previousClose) ?? toNum(meta.chartPreviousClose);
         const prevScaled = prev === null ? null : prev * unit;
 
         out[code] = {
-          rate,
-          change: prevScaled === null ? null : rate - prevScaled,
-          changePct: prevScaled ? ((rate - prevScaled) / prevScaled) * 100 : null,
+          rate: Math.round(rate * 100) / 100,
+          change: prevScaled === null ? null : Math.round((rate - prevScaled) * 100) / 100,
+          changePct: prevScaled ? Math.round(((rate - prevScaled) / prevScaled) * 10000) / 100 : null,
           at: meta.regularMarketTime ? new Date(meta.regularMarketTime * 1000).toISOString() : null,
         };
       } catch (err) {
-        errors.push(`야후 ${code}: ${err.message}`);
+        errors.push(`${code}: ${err.message}`);
       }
     })
   );
-  return out;
-}
 
-// 등락은 음수도 와야 하므로 toNum(양수만)과 따로 둔다.
-function toNumSigned(v) {
-  if (v === null || v === undefined) return null;
-  const n = Number(String(v).replace(/,/g, "").trim());
-  return Number.isFinite(n) ? n : null;
+  if (!Object.keys(out).length) {
+    return {
+      ok: false,
+      error: `실시간 환율을 가져오지 못했습니다. ${errors.join(" / ")}`,
+      debug: debug ? raw : undefined,
+    };
+  }
+  return {
+    ok: true,
+    rates: out,
+    source: "은행 간 시장 중간환율 (Yahoo Finance)",
+    notes: errors.length ? errors : undefined,
+    debug: debug ? raw : undefined,
+  };
 }
 
 // ---------------------------------------------------------------------------
