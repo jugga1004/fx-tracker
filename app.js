@@ -10,6 +10,7 @@
     series: {}, // code -> FxData.load 결과
     view: "overview",
     ccy: "USD",
+    rangeDays: 0, // 0보다 크면 일 단위, 아니면 rangeMonths를 쓴다
     rangeMonths: 12,
     domesticError: null, // 국내 고시환율 연동 실패 메시지 (있으면 ECB로 폴백)
   };
@@ -17,19 +18,11 @@
   // ---------------------------------------------------------------------
   // 환율 소스 분리
   // ---------------------------------------------------------------------
-  // ECB(state.series)      → 장기 시계열이 필요한 곳: 차트, 백분위, 이동평균, 백테스트
-  // 국내 매매기준율(FxDomestic) → 금액이 걸린 곳: 현재 환율, 평가손익, 환전 비용, 면세점
+  // ECB(state.series)      → 장기 시계열: 추이 차트
+  // 국내 매매기준율(FxDomestic) → 금액이 걸린 곳: 상단 오늘 고시, 면세점 적용환율
   //
-  // 차트에 두 소스를 섞으면 0.4%짜리 계단이 생겨 추세를 왜곡하므로 차트는 ECB만 쓴다.
-  // 반대로 손익은 실제 국내 환율로 내야 의미가 있어서 그쪽만 갈아끼운다.
-
-  var hybridCache = {};
-  var domesticVersion = 0;
-
-  function bumpDomestic() {
-    domesticVersion++;
-    hybridCache = {};
-  }
+  // 차트에 두 소스를 섞으면 0.4%짜리 계단이 생겨 추세를 왜곡한다. 그래서 차트는
+  // ECB만 쓰고, 하루 한 번 확정되는 고시가 필요한 곳만 FxDomestic을 직접 읽는다.
 
   function domesticRows(code) {
     var dom = FxDomestic.all(code);
@@ -40,66 +33,12 @@
       });
   }
 
-  // 금액 계산용 시계열. 국내 환율이 있는 날짜는 그 값으로 덮고, 없으면 ECB로 떨어진다.
-  // Portfolio.summarize()가 기대하는 형태를 그대로 유지하므로 portfolio.js는 손댈 필요가 없다.
-  function ratesSeries(code) {
-    var base = state.series[code];
-    if (!base || !base.rows || !base.rows.length) return base;
-    if (!FxDomestic.available()) return base;
-
-    var key = code + ":" + domesticVersion;
-    if (hybridCache[key]) return hybridCache[key];
-
-    var dom = FxDomestic.all(code);
-    var domDates = Object.keys(dom);
-    if (!domDates.length) return base;
-
-    var map = {};
-    base.rows.forEach(function (r) {
-      map[r.date] = r.rate;
-    });
-    domDates.forEach(function (d) {
-      map[d] = dom[d];
-    });
-    var rows = Object.keys(map)
-      .sort()
-      .map(function (d) {
-        return { date: d, rate: map[d] };
-      });
-
-    var latest = FxDomestic.latest(code);
-    var last = rows[rows.length - 1];
-    var out = {
-      code: code,
-      meta: base.meta,
-      rows: rows,
-      lastDate: latest ? latest.date : last.date,
-      lastRate: latest ? latest.rate : last.rate,
-      fetchedAt: base.fetchedAt,
-      stale: base.stale,
-      error: base.error,
-      source: FxDomestic.SOURCE_LABEL,
-      domestic: true,
-    };
-    hybridCache[key] = out;
-    return out;
-  }
-
-  function moneySeriesMap() {
-    var out = {};
-    Object.keys(FxData.CURRENCIES).forEach(function (c) {
-      out[c] = ratesSeries(c);
-    });
-    return out;
-  }
-
   // GitHub Actions가 커밋해둔 rates.json을 읽어와 화면을 다시 그린다.
   // 실패해도 ECB로 계속 돌아가야 하므로 절대 예외를 위로 던지지 않는다.
   // (file://로 열면 fetch가 막혀 항상 실패한다 — 그래도 앱은 정상 동작한다)
   function syncDomestic() {
     return FxDomestic.sync().then(function (res) {
       state.domesticError = res && res.error ? res.error : null;
-      bumpDomestic();
       renderHeader();
       setView(state.view);
       // 실시간 환율은 상단 표시용이라 늦게 붙어도 되고, 실패해도 무시한다.
@@ -181,7 +120,6 @@
     wireOverview();
     wireBackup();
     wireDutyFree();
-    wireRatesSource();
 
     $("footerSource").textContent =
       "시계열(차트·통계): " +
@@ -257,16 +195,6 @@
     }
 
     $("ccyToggle").innerHTML = segHtml(state.ccy);
-
-    var optsHtml = codes
-      .map(function (c) {
-        return '<option value="' + c + '">' + esc(FxData.CURRENCIES[c].label) + "</option>";
-      })
-      .join("");
-    ["alertCcy"].forEach(function (id) {
-      $(id).innerHTML = optsHtml;
-    });
-
     $("ccyToggle").addEventListener("click", function (e) {
       var btn = e.target.closest("button[data-ccy]");
       if (!btn) return;
@@ -438,86 +366,27 @@
       statusHtml += ' <span class="badge badge--warn">환율 파일 갱신 실패 — 저장된 값 사용 중</span>';
     }
     $("dataStatus").innerHTML = statusHtml;
-
-    renderAlertBanner();
   }
-
-  function renderAlertBanner() {
-    var seriesMap = moneySeriesMap();
-    var hits = Portfolio.triggeredAlerts(seriesMap);
-    var box = $("alertBanner");
-    if (!hits.length) {
-      box.hidden = true;
-      return;
-    }
-    box.innerHTML =
-      "<strong>목표 환율 도달</strong> " +
-      hits
-        .map(function (a) {
-          var m = FxData.CURRENCIES[a.code];
-          return (
-            esc(m.label) +
-            " " +
-            rate(seriesMap[a.code].lastRate) +
-            "원 (" +
-            rate(a.rate) +
-            " " +
-            (a.direction === "below" ? "이하" : "이상") +
-            ")"
-          );
-        })
-        .join(" · ");
-    box.hidden = false;
-  }
-
   // ---------------------------------------------------------------------
   // 현황 탭
   // ---------------------------------------------------------------------
 
   function wireOverview() {
     $("rangeToggle").addEventListener("click", function (e) {
-      var btn = e.target.closest("button[data-months]");
+      var btn = e.target.closest("button[data-months], button[data-days]");
       if (!btn) return;
-      state.rangeMonths = Number(btn.dataset.months);
+      // 1주만 일수로 센다. 달은 말일 보정이 필요해 일수로 환산하지 않고
+      // FxData.shiftMonths에 맡긴다 (3/31에서 한 달 전은 2/31이 아니다).
+      state.rangeDays = Number(btn.dataset.days || 0);
+      state.rangeMonths = btn.dataset.days ? 0 : Number(btn.dataset.months);
       Array.prototype.forEach.call($("rangeToggle").children, function (b) {
         b.classList.toggle("is-active", b === btn);
       });
       renderChart();
-    });
-
-    $("alertForm").addEventListener("submit", function (e) {
-      e.preventDefault();
-      try {
-        Portfolio.addAlert({
-          code: $("alertCcy").value,
-          direction: $("alertDir").value,
-          rate: $("alertRate").value,
-        });
-        $("alertRate").value = "";
-        renderAlerts();
-        renderAlertBanner();
-      } catch (err) {
-        alert(err.message);
-      }
-    });
-
-    $("alertList").addEventListener("click", function (e) {
-      var btn = e.target.closest("button[data-del]");
-      if (!btn) return;
-      Portfolio.removeAlert(btn.dataset.del);
-      renderAlerts();
-      renderAlertBanner();
-    });
-  }
+    });  }
 
   function renderOverview() {
     renderChart();
-    renderPosition();
-    renderBand();
-    renderAlerts();
-    // 설정 카드가 이 탭 안에 접혀 있다. 펼쳤을 때 최신 상태가 보이도록 같이 그린다.
-    renderRatesStatus();
-    renderLiveStatus();
   }
 
   function currentSeries() {
@@ -533,162 +402,25 @@
     }
 
     var rows = s.rows;
-    if (state.rangeMonths > 0) {
+    if (state.rangeDays > 0) {
+      rows = FxStats.sliceSince(rows, FxData.shiftDays(s.lastDate, -state.rangeDays));
+    } else if (state.rangeMonths > 0) {
       rows = FxStats.sliceSince(rows, FxData.shiftMonths(s.lastDate, -state.rangeMonths));
     }
     if (rows.length < 2) rows = s.rows;
 
-    Chart.line(box, {
-      rows: rows,
-      height: 280,
-      ma: [{ values: Chart.movingAverage(rows, 20) }, { values: Chart.movingAverage(rows, 60) }],
-    });
-  }
+    // 이동평균은 잘라낸 구간 안에서만 계산된다. 1주치처럼 구간이 평균 기간보다
+    // 짧으면 선이 한 점도 안 그려지는데 범례만 남아 "선이 왜 없지"가 된다.
+    // 그릴 수 있을 때만 넣고 범례도 같이 여닫는다.
+    var ma = [];
+    var show20 = rows.length >= 20;
+    var show60 = rows.length >= 60;
+    if (show20) ma.push({ values: Chart.movingAverage(rows, 20) });
+    if (show60) ma.push({ values: Chart.movingAverage(rows, 60) });
+    $("legendMa20").hidden = !show20;
+    $("legendMa60").hidden = !show60;
 
-  function renderPosition() {
-    var s = currentSeries();
-    var box = $("positionBox");
-    if (!s || !s.rows || s.rows.length < 2) {
-      box.innerHTML = '<p class="muted small">데이터가 없습니다.</p>';
-      return;
-    }
-    var st = FxStats.summary(s.rows);
-    var m = s.meta;
-
-    var rowsHtml = st.windows
-      .map(function (w) {
-        var below = w.percentile;
-        return (
-          "<tr><th>" +
-          esc(w.label) +
-          "</th>" +
-          "<td><strong>" +
-          num(below, 0) +
-          " 백분위</strong><br /><span class=\"muted small\">이 기간 관측치의 " +
-          num(below, 0) +
-          "%가 지금 이하였음</span></td>" +
-          "<td>" +
-          rate(w.min) +
-          " ~ " +
-          rate(w.max) +
-          "</td>" +
-          "<td>" +
-          rate(w.mean) +
-          "</td>" +
-          "<td>" +
-          num(w.z, 2) +
-          "</td></tr>"
-        );
-      })
-      .join("");
-
-    function maRow(label, v) {
-      if (!isFinite(v)) return "";
-      var gap = ((st.lastRate - v) / v) * 100;
-      return (
-        "<tr><th>" +
-        label +
-        "</th><td>" +
-        rate(v) +
-        "원</td><td class=\"" +
-        pnlClass(gap) +
-        '">이격도 ' +
-        signedPct(gap) +
-        "</td></tr>"
-      );
-    }
-
-    box.innerHTML =
-      '<div class="table-scroll"><table class="data-table">' +
-      "<thead><tr><th>기간</th><th>현재 위치</th><th>최저 ~ 최고</th><th>평균</th><th>z-score</th></tr></thead>" +
-      "<tbody>" +
-      rowsHtml +
-      "</tbody></table></div>" +
-      '<div class="table-scroll"><table class="data-table mt">' +
-      "<thead><tr><th>이동평균</th><th>값 (" +
-      esc(m.unitLabel) +
-      " 기준)</th><th>현재 대비</th></tr></thead><tbody>" +
-      maRow("20일", st.ma20) +
-      maRow("60일", st.ma60) +
-      maRow("120일", st.ma120) +
-      "</tbody></table></div>" +
-      '<p class="muted small mt">52주 최저 ' +
-      rate(st.week52.min) +
-      " (" +
-      esc(st.week52.minDate || "—") +
-      ") · 52주 최고 " +
-      rate(st.week52.max) +
-      " (" +
-      esc(st.week52.maxDate || "—") +
-      ")</p>";
-  }
-
-  function renderBand() {
-    var s = currentSeries();
-    var box = $("bandBox");
-    if (!s || !s.rows || s.rows.length < 30) {
-      box.innerHTML = '<p class="muted small">데이터가 부족합니다.</p>';
-      return;
-    }
-    var st = FxStats.summary(s.rows);
-
-    function bandRow(label, b68, b95) {
-      return (
-        "<tr><th>" +
-        label +
-        "</th><td>" +
-        rate(b68.low) +
-        " ~ " +
-        rate(b68.high) +
-        "</td><td>" +
-        rate(b95.low) +
-        " ~ " +
-        rate(b95.high) +
-        "</td></tr>"
-      );
-    }
-
-    box.innerHTML =
-      '<div class="table-scroll"><table class="data-table">' +
-      "<thead><tr><th>기간</th><th>68% 구간</th><th>95% 구간</th></tr></thead><tbody>" +
-      bandRow("5영업일 뒤", st.band5d68, st.band5d95) +
-      bandRow("20영업일 뒤", st.band20d68, st.band20d95) +
-      "</tbody></table></div>" +
-      '<p class="muted small mt">최근 120영업일 변동성 기준 · 연환산 변동성 ' +
-      pct(st.annualVolPct, 1) +
-      "</p>";
-  }
-
-  function renderAlerts() {
-    var alerts = Portfolio.load().alerts;
-    var list = $("alertList");
-    if (!alerts.length) {
-      list.innerHTML = '<li class="muted small">등록된 알림이 없습니다.</li>';
-      return;
-    }
-    list.innerHTML = alerts
-      .map(function (a) {
-        var m = FxData.CURRENCIES[a.code];
-        var s = ratesSeries(a.code);
-        var hit = s && isFinite(s.lastRate) && (a.direction === "below" ? s.lastRate <= a.rate : s.lastRate >= a.rate);
-        return (
-          "<li" +
-          (hit ? ' class="hit"' : "") +
-          "><span>" +
-          esc(m.label) +
-          " " +
-          esc(m.unitLabel) +
-          "당 <strong>" +
-          rate(a.rate) +
-          "원</strong> " +
-          (a.direction === "below" ? "이하" : "이상") +
-          (hit ? " — 조건 충족" : "") +
-          '</span><button type="button" class="link-btn" data-del="' +
-          esc(a.id) +
-          '">삭제</button></li>'
-        );
-      })
-      .join("");
+    Chart.line(box, { rows: rows, height: 280, ma: ma });
   }
 
   // ---------------------------------------------------------------------
@@ -720,11 +452,7 @@
         try {
           Portfolio.importJSON(String(reader.result));
           $("backupMsg").textContent = "가져왔습니다.";
-          $("ratesUrl").value = FxDomestic.configuredUrl();
-          $("liveUrl").value = FxDomestic.configuredLiveUrl();
           renderDutyFree();
-          renderAlerts();
-          renderAlertBanner();
           renderChart();
           syncDomestic();
         } catch (err) {
@@ -733,155 +461,7 @@
       };
       reader.readAsText(file);
       e.target.value = "";
-    });
-
-    $("resetBtn").addEventListener("click", function () {
-      if (!confirm("관심 상품·알림·설정을 모두 지웁니다. 되돌릴 수 없습니다. 계속할까요?")) return;
-      Portfolio.resetAll();
-      FxDomestic.clear();
-      bumpDomestic();
-      $("ratesUrl").value = "";
-      $("liveUrl").value = "";
-      renderHeader();
-      renderDutyFree();
-      renderAlerts();
-      renderChart();
-      $("backupMsg").textContent = "전체 삭제했습니다.";
-    });
-  }
-
-  // ---------------------------------------------------------------------
-  // 국내 고시환율 데이터 소스
-  // ---------------------------------------------------------------------
-  // 기본값은 같은 저장소의 ./data/rates.json이라 보통은 설정할 게 없다.
-  // 앱을 GitHub Pages가 아닌 곳에 올렸을 때만 절대 주소를 직접 넣는다.
-
-  function wireRatesSource() {
-    $("ratesUrl").value = FxDomestic.configuredUrl();
-    $("ratesUrl").placeholder = FxDomestic.DEFAULT_URL + " (기본값)";
-
-    $("ratesForm").addEventListener("submit", function (e) {
-      e.preventDefault();
-      var url = ($("ratesUrl").value || "").trim();
-      var box = $("ratesStatus");
-      box.innerHTML = '<span class="loading">확인 중...</span>';
-
-      // 비워서 저장하면 기본 경로로 되돌아간다.
-      if (!url) {
-        FxDomestic.setUrl("");
-        syncDomestic().then(renderRatesStatus);
-        return;
-      }
-      FxDomestic.check(url).then(
-        function () {
-          state.domesticError = null;
-          bumpDomestic();
-          renderHeader();
-          setView(state.view);
-          renderRatesStatus();
-        },
-        function (err) {
-          box.innerHTML = '<span class="neg">' + esc(err.message) + "</span>";
-        }
-      );
-    });
-
-    $("ratesReload").addEventListener("click", function () {
-      $("ratesStatus").innerHTML = '<span class="loading">다시 받는 중...</span>';
-      syncDomestic().then(renderRatesStatus);
-    });
-
-    // --- 실시간 조회 Worker
-    $("liveUrl").value = FxDomestic.configuredLiveUrl();
-    $("liveUrl").placeholder = FxDomestic.DEFAULT_LIVE_URL + " (기본값)";
-
-    $("liveForm").addEventListener("submit", function (e) {
-      e.preventDefault();
-      var url = ($("liveUrl").value || "").trim();
-      var box = $("liveStatus");
-      if (!url) {
-        Portfolio.setLiveUrl("");
-        renderLiveStatus();
-        return;
-      }
-      box.innerHTML = '<span class="loading">확인 중...</span>';
-      Promise.resolve()
-        .then(function () {
-          return FxDomestic.checkLive(url);
-        })
-        .then(
-          function () {
-            return FxDomestic.forceLive().then(function () {
-              bumpDomestic();
-              renderHeader();
-              setView(state.view);
-              renderLiveStatus();
-            });
-          },
-          function (err) {
-            box.innerHTML = '<span class="neg">' + esc(err.message) + "</span>";
-          }
-        );
-    });
-
-    $("liveFetch").addEventListener("click", function () {
-      if (!FxDomestic.liveEnabled()) {
-        $("liveStatus").innerHTML = '<span class="neg">먼저 Worker 주소를 저장하세요.</span>';
-        return;
-      }
-      $("liveStatus").innerHTML = '<span class="loading">조회 중...</span>';
-      FxDomestic.forceLive().then(function () {
-        bumpDomestic();
-        renderHeader();
-        setView(state.view);
-        renderLiveStatus();
-      });
-    });
-  }
-
-  function renderLiveStatus() {
-    var box = $("liveStatus");
-    if (!box) return;
-    if (!FxDomestic.liveEnabled()) {
-      box.innerHTML = "연결 전입니다. 예약 갱신이 밀리면 당일 고시가 늦게 들어옵니다.";
-      return;
-    }
-    var latest = FxDomestic.latestDate();
-    var fresh = latest === FxData.todayISO();
-    box.innerHTML =
-      '<span class="pos">연결됨</span> · 최신 고시일 <strong>' +
-      esc(latest || "—") +
-      "</strong>" +
-      (fresh
-        ? " (오늘 자 확보)"
-        : ' <span class="muted">— 아직 오늘 고시가 없습니다. 11시 이후라면 「지금 받기」를 눌러보세요.</span>');
-  }
-
-  function renderRatesStatus() {
-    var box = $("ratesStatus");
-    if (!box) return;
-
-    if (!FxDomestic.available()) {
-      box.innerHTML =
-        '<span class="neg">국내 환율 데이터가 없습니다.</span> 지금은 ECB 공시 환율로 계산하고 있습니다.<br />' +
-        (state.domesticError ? "사유: " + esc(state.domesticError) + "<br />" : "") +
-        '<span class="muted">GitHub Actions의 「환율 갱신」이 한 번 실행돼야 <code>' +
-        esc(FxDomestic.effectiveUrl()) +
-        "</code> 가 생깁니다. 파일을 로컬에서 직접 열었다면(file://) 브라우저가 읽기를 막으므로 정상입니다.</span>";
-      return;
-    }
-
-    var updated = FxDomestic.updatedAt();
-    box.innerHTML =
-      '<span class="pos">사용 중</span> · 최신 고시일 <strong>' +
-      esc(FxDomestic.latestDate() || "—") +
-      "</strong> · 보유 " +
-      FxDomestic.count() +
-      "일치 · " +
-      esc(FxDomestic.SOURCE_LABEL) +
-      (updated ? '<br /><span class="muted">파일 갱신 ' + esc(String(updated).slice(0, 16).replace("T", " ")) + " UTC</span>" : "") +
-      (state.domesticError ? '<br /><span class="neg">최근 갱신 실패: ' + esc(state.domesticError) + " (저장된 값 사용 중)</span>" : "");
-  }
+    });  }
 
   // ---------------------------------------------------------------------
   // 면세점 탭
