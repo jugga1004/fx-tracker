@@ -987,6 +987,22 @@
   // ---------------------------------------------------------------------
   // 오늘 / 내일 적용환율
   // ---------------------------------------------------------------------
+  // 값 카드 한 칸. 내 보유 탭에서 쓰던 것을 그 탭과 함께 지웠다가 되살렸다 —
+  // 면세점 적용환율 카드가 같은 모양을 쓰고 있었는데 놓쳤다.
+  function stat(label, value, sub, cls) {
+    return (
+      '<div class="stat"><div class="stat__label">' +
+      esc(label) +
+      '</div><div class="stat__value ' +
+      (cls || "") +
+      '">' +
+      value +
+      "</div>" +
+      (sub ? '<div class="stat__sub">' + sub + "</div>" : "") +
+      "</div>"
+    );
+  }
+
   function renderDfEstimate() {
     var box = $("dutyFreeEstimate");
     if (!box) return;
