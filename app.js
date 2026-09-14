@@ -893,7 +893,8 @@
     });
 
     // --- 실시간 조회 Worker
-    $("liveUrl").value = FxDomestic.liveUrl();
+    $("liveUrl").value = FxDomestic.configuredLiveUrl();
+    $("liveUrl").placeholder = FxDomestic.DEFAULT_LIVE_URL + " (기본값)";
 
     $("liveForm").addEventListener("submit", function (e) {
       e.preventDefault();

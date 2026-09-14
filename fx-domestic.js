@@ -182,8 +182,22 @@
   var LIVE_RETRY_MS = 10 * 60 * 1000; // 실패했더라도 10분 안에는 다시 조르지 않는다
   var lastLiveTry = 0;
 
-  function liveUrl() {
+  // 기본 Worker 주소. 설정에서 비워두면 이 주소를 쓴다.
+  //
+  // 예전엔 기본값이 빈 문자열이었다. 그래서 PC에서 주소를 넣어도 그 값은 그 기기의
+  // localStorage에만 남았고, 폰으로 링크를 열면 Worker가 꺼진 채로 시작했다.
+  // 증상이 "폰에서만 지난주 고시가 계속 보임"이었다 — rates.json은 예약 갱신이 밀리면
+  // 지난 영업일에 머무는데, 그걸 메워줄 경로가 그 기기엔 아예 없었던 것이다.
+  // 주소는 비밀이 아니다. 인증키는 Worker Secret 안에만 있고 응답에 실려 나오지 않으며,
+  // 상품 조회는 호스트 허용목록으로 막아 뒀다.
+  var DEFAULT_LIVE_URL = "https://fx-live.jugga1004.workers.dev";
+
+  function configuredLiveUrl() {
     return (global.Portfolio.getSettings().liveUrl || "").trim();
+  }
+
+  function liveUrl() {
+    return configuredLiveUrl() || DEFAULT_LIVE_URL;
   }
 
   function liveEnabled() {
@@ -424,6 +438,8 @@
     appliedOn: appliedOn,
     appliedSeries: appliedSeries,
     appliedTomorrow: appliedTomorrow,
+    DEFAULT_LIVE_URL: DEFAULT_LIVE_URL,
+    configuredLiveUrl: configuredLiveUrl,
     liveUrl: liveUrl,
     liveEnabled: liveEnabled,
     checkLive: checkLive,
