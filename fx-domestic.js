@@ -191,14 +191,21 @@
   }
 
   // 보충이 필요한 상황인지. 오늘 자가 이미 있으면 볼 필요가 없다.
+  //
+  // 예전에는 "11시 이후"라는 조건을 뒀다. 수출입은행 안내문의 "영업일 11시 전후 갱신"을
+  // 그대로 믿은 건데, 실측해보니 훨씬 일찍 나온다 — 2026-09-14 10:20에 이미 당일 고시가
+  // 있었고(1,346.4), 그 시각 dutyfreemania도 같은 값을 보여주고 있었다.
+  // 시계로 막으면 그 사이 내내 '내일 적용환율'을 못 보여준다. 그래서 시각 조건은 뺐다.
+  //
+  // 헛걸음 비용은 이미 다른 장치로 막혀 있다 — 오늘 자를 이미 갖고 있으면 호출하지 않고,
+  // 실패해도 10분 안에는 다시 조르지 않으며, Worker도 빈 응답을 10분 캐시한다.
   function needsLive() {
     if (!liveEnabled()) return false;
     if (latestDate() === global.FxData.todayISO()) return false;
     if (Date.now() - lastLiveTry < LIVE_RETRY_MS) return false;
-    // 고시는 11시경이라 그전에 물어봐야 빈손이다. 주말도 마찬가지.
-    var now = new Date();
-    if (now.getDay() === 0 || now.getDay() === 6) return false;
-    return now.getHours() >= 11;
+    // 주말은 고시 자체가 없다.
+    var day = new Date().getDay();
+    return day !== 0 && day !== 6;
   }
 
   // 성공하면 true. 실패는 조용히 삼킨다 — 파일 데이터만으로도 앱은 돌아가야 한다.

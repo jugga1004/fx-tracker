@@ -361,8 +361,17 @@
           if (isFinite(live.change)) {
             delta = { abs: live.change, pct: isFinite(live.changePct) ? live.changePct : NaN };
           }
-          sub = "실시간" + (live.at ? " " + hhmmLocal(live.at) : "");
-          if (dom.length) sub += " · 매매기준율 " + rate(dom[dom.length - 1].rate) + " (" + dom[dom.length - 1].date.slice(5) + ")";
+          // 실시간 값 옆에 '매매기준율 1,338.2' 를 나란히 찍었더니 같은 성격의 값으로
+          // 보였다. 둘은 소스도 성격도 다르다 — 무엇의 값인지 앞에 붙여 구분한다.
+          sub = "시장환율" + (live.at ? " " + hhmmLocal(live.at) : "") + " 기준";
+          if (dom.length) {
+            sub +=
+              '<br /><span class="muted">오늘 고시 ' +
+              rate(dom[dom.length - 1].rate) +
+              " (" +
+              dom[dom.length - 1].date.slice(5) +
+              ")</span>";
+          }
         } else if (dom.length) {
           // 국내 매매기준율이 있으면 그쪽을 대표값으로 쓴다. 전일 대비도
           // 반드시 같은 소스끼리 비교해야 해서 국내 값끼리만 뺀다.
@@ -1436,9 +1445,10 @@
   // 둘을 구분해줘야 "왜 안 나오지"를 헤매지 않는다.
   function tomorrowSubLabel(tomorrowApplied) {
     if (tomorrowApplied) return tomorrowApplied.quoteDate.slice(5) + " 고시";
-    var now = new Date();
-    var afterQuoteTime = now.getHours() > 11 || (now.getHours() === 11 && now.getMinutes() >= 30);
-    return afterQuoteTime ? "오늘 고시 반영 대기 중" : "오늘 고시(11시경) 후 확정";
+    // 고시는 오전 중에 나온다(2026-09-14 실측 10:20에 이미 있었음).
+    // 그 시각을 넘겼는데도 없으면 '아직 안 나온 것'이 아니라 '우리가 못 받은 것'이다.
+    var h = new Date().getHours();
+    return h >= 10 ? "오늘 고시 반영 대기 중" : "오늘 고시 후 확정";
   }
 
   // ---------------------------------------------------------------------
