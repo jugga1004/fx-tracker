@@ -23,10 +23,7 @@
          그 아래에 탭이 있으면 탭 위치가 오르내려서 누르려던 자리를 놓친다. -->
     <div id="tabs" class="mode-tabs" role="tablist">
       <button type="button" class="mode-tab" data-view="overview" role="tab" aria-selected="true">현황</button>
-      <button type="button" class="mode-tab" data-view="holdings" role="tab" aria-selected="false">내 보유</button>
-      <button type="button" class="mode-tab" data-view="plan" role="tab" aria-selected="false">계획</button>
       <button type="button" class="mode-tab" data-view="dutyfree" role="tab" aria-selected="false">면세점환율</button>
-      <button type="button" class="mode-tab" data-view="models" role="tab" aria-selected="false">모델 성적표</button>
     </div>
 
     <div id="rateCards" class="rate-cards"></div>
@@ -57,7 +54,6 @@
           <span class="key key--line"></span> 환율
           <span class="key key--ma0"></span> 20일 평균
           <span class="key key--ma1"></span> 60일 평균
-          <span class="key key--marker"></span> 내 매수
         </p>
       </div>
 
@@ -93,41 +89,16 @@
         </form>
         <ul id="alertList" class="plain-list"></ul>
       </div>
-    </section>
 
-    <!-- =========================== 내 보유 =========================== -->
-    <section id="view-holdings" class="view" hidden>
-      <div id="holdingSummary"></div>
+      <!-- 설정은 탭을 따로 줄 만한 내용이 아니라 접어서 맨 아래에 둔다.
+           다만 내보내기는 반드시 손 닿는 곳에 있어야 한다 — 관심 상품과 알림은
+           이 브라우저의 localStorage에만 있어서 브라우저 데이터를 지우면 사라진다. -->
+      <details class="card card--fold">
+        <summary>설정 · 데이터</summary>
 
-      <div class="card">
-        <h2>매수 기록 추가</h2>
+        <h3>국내 고시환율</h3>
         <p class="muted small">
-          고시환율이 아니라 <strong>실제로 낸 원화</strong>와 <strong>실제로 받은 외화</strong>를 적으세요.
-          그래야 스프레드와 수수료가 자동으로 평균단가에 반영됩니다.
-        </p>
-        <form id="buyForm" class="form-grid">
-          <label>날짜<input id="buyDate" type="date" required /></label>
-          <label>통화<select id="buyCcy"></select></label>
-          <label>지불한 원화<input id="buyKrw" type="number" step="1" min="0" placeholder="1000000" required /></label>
-          <label>받은 외화<input id="buyForeign" type="number" step="0.01" min="0" placeholder="730.5" required /></label>
-          <label class="span2">메모 (선택)<input id="buyMemo" type="text" placeholder="OO은행 앱 환전" /></label>
-          <div class="span2 form-actions">
-            <span id="buyPreview" class="muted small"></span>
-            <button type="submit">추가</button>
-          </div>
-        </form>
-        <div id="buyError" class="error-box" hidden></div>
-      </div>
-
-      <div class="card">
-        <h2>매수 내역</h2>
-        <div id="buyList"></div>
-      </div>
-
-      <div class="card">
-        <h2>국내 고시환율</h2>
-        <p class="muted small">
-          차트·통계는 ECB 시계열을 쓰지만, 금액 계산(평가손익·환전 비용·면세점 프리미엄)은
+          차트·통계는 ECB 시계열을 쓰지만, 금액 계산(면세점 적용환율·상품 원화가)은
           <strong>한국수출입은행 매매기준율</strong>을 씁니다. 두 값은 <strong>0.4% 안팎 차이</strong>가 납니다.
           매매기준율은 GitHub Actions가 매 영업일 받아 저장소에 커밋해두고, 앱은 그 파일을 읽습니다.
           <strong>인증키는 GitHub Secrets에만 있고 이 앱에는 들어오지 않습니다.</strong>
@@ -139,12 +110,12 @@
         </form>
         <div id="ratesStatus" class="muted small mt"></div>
 
-        <h3>실시간 조회 (권장)</h3>
+        <h3>실시간 조회</h3>
         <p class="muted small">
           위 파일은 GitHub Actions 예약으로 갱신되는데, 무료 러너라 예약이 통째로 건너뛰는 일이 잦습니다.
           그러면 정작 필요한 당일 고시가 없어 <strong>내일 적용환율을 못 보여줍니다.</strong>
           Cloudflare Worker를 붙이면 <strong>앱을 여는 순간</strong> 직접 조회하므로 예약과 무관하게 항상 최신입니다.
-          파일이 이미 오늘 자를 담고 있으면 호출하지 않습니다. 배포 방법은 <code>worker/README.md</code>에 있습니다.
+          기본 주소가 이미 들어 있어 보통은 건드릴 게 없습니다. 파일이 이미 오늘 자를 담고 있으면 호출하지 않습니다.
         </p>
         <form id="liveForm" class="form-row">
           <label class="grow"><span>Worker 주소 (비우면 기본값)</span><input id="liveUrl" type="url" /></label>
@@ -152,21 +123,10 @@
           <button type="button" id="liveFetch" class="ghost">지금 받기</button>
         </form>
         <div id="liveStatus" class="muted small mt"></div>
-      </div>
 
-      <div class="card">
-        <h2>환전 조건 설정</h2>
+        <h3>데이터 백업</h3>
         <p class="muted small">
-          평가손익을 정확히 내려면 <strong>팔 때 물어야 할 스프레드</strong>가 필요합니다.
-          기본값은 현찰 기준 1.75%이며, 본인 거래 은행 조건으로 바꿔주세요.
-        </p>
-        <div id="spreadSettings" class="form-grid"></div>
-      </div>
-
-      <div class="card">
-        <h2>데이터 백업</h2>
-        <p class="muted small">
-          기록은 이 브라우저에만 저장됩니다. 브라우저 데이터를 지우면 사라지니 가끔 내보내 두세요.
+          관심 상품과 목표 알림은 이 브라우저에만 저장됩니다. 브라우저 데이터를 지우면 사라지니 가끔 내보내 두세요.
         </p>
         <div class="form-actions form-actions--left">
           <button type="button" id="exportBtn">내보내기 (JSON)</button>
@@ -174,46 +134,8 @@
           <button type="button" id="resetBtn" class="danger">전체 삭제</button>
         </div>
         <div id="backupMsg" class="muted small"></div>
-      </div>
-    </section>
+      </details>
 
-    <!-- ============================= 계획 ============================= -->
-    <section id="view-plan" class="view" hidden>
-      <div class="card">
-        <h2>분할매수 vs 일시불 — 과거엔 어땠나</h2>
-        <p class="muted small">
-          실제 환율 데이터로 두 방식의 최종 평균단가를 계산합니다. 매수자에게는 평균단가가 낮을수록 유리합니다.
-          <strong>과거 특정 구간의 결과일 뿐 앞으로를 보장하지 않습니다.</strong>
-        </p>
-        <div class="seg seg--range" id="dcaRange" role="group">
-          <button type="button" data-months="12">1년</button>
-          <button type="button" data-months="36" class="is-active">3년</button>
-          <button type="button" data-months="60">5년</button>
-          <button type="button" data-months="120">10년</button>
-        </div>
-        <div id="dcaCompare"></div>
-      </div>
-
-      <div class="card">
-        <h2>분할매수 계획 세우기</h2>
-        <form id="planForm" class="form-grid">
-          <label>통화<select id="planCcy"></select></label>
-          <label>총 매수 금액 (원)<input id="planTotal" type="number" step="10000" min="0" placeholder="12000000" required /></label>
-          <label>분할 횟수<input id="planCount" type="number" step="1" min="2" placeholder="12" required /></label>
-          <label>주기<select id="planPeriod"><option value="month">매월</option><option value="week">매주</option></select></label>
-          <label>시작일<input id="planStart" type="date" required /></label>
-          <div class="span2 form-actions">
-            <span id="planPreview" class="muted small"></span>
-            <button type="submit">계획 추가</button>
-          </div>
-        </form>
-        <div id="planError" class="error-box" hidden></div>
-      </div>
-
-      <div class="card">
-        <h2>진행 중인 계획</h2>
-        <div id="planList"></div>
-      </div>
     </section>
 
     <!-- ============================ 면세점 ============================ -->
@@ -245,41 +167,6 @@
 
       <div id="dutyFreeWeek"></div>
     </section>
-
-    <!-- ========================== 모델 성적표 ========================== -->
-    <section id="view-models" class="view" hidden>
-      <div class="card card--warn">
-        <h2>먼저 읽어주세요</h2>
-        <p>
-          단기 환율 예측은 <strong>Meese &amp; Rogoff(1983)</strong> 이후 40년 넘게
-          랜덤워크(&ldquo;내일도 오늘과 같다&rdquo;)를 안정적으로 이기는 모델이 나오지 않은 영역입니다.
-          아래 모델들은 맞히라고 넣은 게 아니라 <strong>실제로 못 맞힌다는 걸 이 데이터로 직접 확인하시라고</strong> 넣었습니다.
-        </p>
-        <ul class="tight">
-          <li><strong>Theil&rsquo;s U</strong> = 모델 오차 ÷ 랜덤워크 오차. <strong>1보다 크면 아무것도 안 하느니만 못한 것</strong>입니다.</li>
-          <li><strong>방향 적중률</strong>의 95% 신뢰구간에 50%가 들어 있으면, 그 모델은 동전 던지기와 구분되지 않습니다.</li>
-        </ul>
-      </div>
-
-      <div class="card">
-        <div class="card__head">
-          <h2>현재 시점 예측값</h2>
-          <div class="seg" id="modelCcyToggle" role="group" aria-label="통화 선택"></div>
-        </div>
-        <div id="predictBox"></div>
-      </div>
-
-      <div class="card">
-        <h2>walk-forward 백테스트 성적</h2>
-        <p class="muted small" id="backtestMeta"></p>
-        <div id="backtestBox"></div>
-        <p class="muted small">
-          각 시점에서 <strong>그 시점까지의 데이터만</strong> 보고 예측한 뒤 실제값과 비교했습니다(미래 참조 없음).
-          다만 예측 구간이 서로 겹치므로 관측치가 완전히 독립적이지 않고, 그만큼 위 신뢰구간은
-          실제보다 좁게 나옵니다 — 즉 &ldquo;의미 있음&rdquo; 판정은 보수적으로 읽으셔야 합니다.
-        </p>
-      </div>
-    </section>
   </main>
 
   <footer class="app-footer">
@@ -297,7 +184,6 @@
 
   <script src="fx-data.js"></script>
   <script src="fx-stats.js"></script>
-  <script src="fx-models.js"></script>
   <script src="portfolio.js"></script>
   <script src="fx-domestic.js"></script>
   <script src="chart.js"></script>

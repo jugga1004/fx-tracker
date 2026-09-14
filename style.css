@@ -185,6 +185,38 @@ code {
   margin-bottom: var(--gap);
 }
 
+/* 설정·데이터는 매일 볼 것이 아니라 접어 둔다. 접힌 상태에서는 제목 한 줄만 차지한다. */
+.card--fold > summary {
+  cursor: pointer;
+  font-weight: 600;
+  list-style: none;
+}
+
+.card--fold > summary::-webkit-details-marker {
+  display: none;
+}
+
+.card--fold > summary::before {
+  content: "▸ ";
+  color: var(--color-muted);
+}
+
+.card--fold[open] > summary::before {
+  content: "▾ ";
+}
+
+.card--fold[open] > summary {
+  margin-bottom: 10px;
+}
+
+.card--fold h3 {
+  margin-top: 18px;
+}
+
+.card--fold > summary + h3 {
+  margin-top: 0;
+}
+
 .card--warn {
   background: var(--color-warn-bg);
   border-color: #f2d9a8;

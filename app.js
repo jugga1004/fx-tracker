@@ -4,21 +4,15 @@
   // ---------------------------------------------------------------------
   // 화면 로직
   // ---------------------------------------------------------------------
-  // 계산은 전부 fx-stats / fx-models / portfolio 가 하고, 여기서는 그리기만 한다.
-  // 백테스트는 무거워서(수만 번 예측) 탭을 처음 열 때 한 번만 돌리고 캐시한다.
+  // 계산은 전부 fx-stats / portfolio 가 하고, 여기서는 그리기만 한다.
 
   var state = {
     series: {}, // code -> FxData.load 결과
     view: "overview",
     ccy: "USD",
-    modelCcy: "USD",
     rangeMonths: 12,
-    dcaMonths: 36,
-    backtestCache: {}, // code -> backtest 결과
     domesticError: null, // 국내 고시환율 연동 실패 메시지 (있으면 ECB로 폴백)
   };
-
-  var HORIZONS = [1, 5, 20];
 
   // ---------------------------------------------------------------------
   // 환율 소스 분리
@@ -185,8 +179,7 @@
     buildCurrencySelectors();
     wireTabs();
     wireOverview();
-    wireHoldings();
-    wirePlan();
+    wireBackup();
     wireDutyFree();
     wireRatesSource();
 
@@ -198,12 +191,6 @@
       "년 · 금액 계산: " +
       FxDomestic.SOURCE_LABEL +
       " (없으면 ECB)";
-
-    // 오늘 날짜를 기본값으로
-    var today = FxData.todayISO();
-    $("buyDate").value = today;
-    $("planStart").value = today;
-
 
     FxData.loadAll()
       .then(function (map) {
@@ -270,14 +257,13 @@
     }
 
     $("ccyToggle").innerHTML = segHtml(state.ccy);
-    $("modelCcyToggle").innerHTML = segHtml(state.modelCcy);
 
     var optsHtml = codes
       .map(function (c) {
         return '<option value="' + c + '">' + esc(FxData.CURRENCIES[c].label) + "</option>";
       })
       .join("");
-    ["buyCcy", "planCcy", "alertCcy"].forEach(function (id) {
+    ["alertCcy"].forEach(function (id) {
       $(id).innerHTML = optsHtml;
     });
 
@@ -287,14 +273,6 @@
       state.ccy = btn.dataset.ccy;
       $("ccyToggle").innerHTML = segHtml(state.ccy);
       renderOverview();
-    });
-
-    $("modelCcyToggle").addEventListener("click", function (e) {
-      var btn = e.target.closest("button[data-ccy]");
-      if (!btn) return;
-      state.modelCcy = btn.dataset.ccy;
-      $("modelCcyToggle").innerHTML = segHtml(state.modelCcy);
-      renderModels();
     });
   }
 
@@ -320,9 +298,6 @@
     var hideRates = view === "dutyfree";
     $("rateCards").hidden = hideRates;
     $("dataStatus").hidden = hideRates;
-    if (view === "models") renderModels();
-    if (view === "plan") renderPlan();
-    if (view === "holdings") renderHoldings();
     if (view === "overview") renderOverview();
     if (view === "dutyfree") renderDutyFree();
   }
@@ -540,6 +515,9 @@
     renderPosition();
     renderBand();
     renderAlerts();
+    // 설정 카드가 이 탭 안에 접혀 있다. 펼쳤을 때 최신 상태가 보이도록 같이 그린다.
+    renderRatesStatus();
+    renderLiveStatus();
   }
 
   function currentSeries() {
@@ -560,20 +538,10 @@
     }
     if (rows.length < 2) rows = s.rows;
 
-    var markers = Portfolio.buysFor(state.ccy)
-      .filter(function (b) {
-        return b.date >= rows[0].date;
-      })
-      .map(function (b) {
-        var er = Portfolio.effectiveRate(b);
-        return { date: b.date, rate: er, label: b.date + " · 실효 " + rate(er) + "원 · " + won(b.krw) };
-      });
-
     Chart.line(box, {
       rows: rows,
       height: 280,
       ma: [{ values: Chart.movingAverage(rows, 20) }, { values: Chart.movingAverage(rows, 60) }],
-      markers: markers,
     });
   }
 
@@ -724,58 +692,12 @@
   }
 
   // ---------------------------------------------------------------------
-  // 내 보유 탭
+  // 데이터 백업
   // ---------------------------------------------------------------------
+  // 관심 상품과 목표 알림은 이 브라우저의 localStorage에만 있다.
+  // 브라우저 데이터를 한 번 지우면 그대로 사라지므로 내보내기는 손 닿는 곳에 있어야 한다.
 
-  function wireHoldings() {
-    ["buyKrw", "buyForeign", "buyCcy"].forEach(function (id) {
-      $(id).addEventListener("input", updateBuyPreview);
-      $(id).addEventListener("change", updateBuyPreview);
-    });
-
-    $("buyForm").addEventListener("submit", function (e) {
-      e.preventDefault();
-      var box = $("buyError");
-      box.hidden = true;
-      try {
-        Portfolio.addBuy({
-          date: $("buyDate").value,
-          code: $("buyCcy").value,
-          krw: $("buyKrw").value,
-          foreign: $("buyForeign").value,
-          memo: $("buyMemo").value,
-        });
-        $("buyKrw").value = "";
-        $("buyForeign").value = "";
-        $("buyMemo").value = "";
-        updateBuyPreview();
-        renderHoldings();
-        renderChart();
-      } catch (err) {
-        box.textContent = err.message;
-        box.hidden = false;
-      }
-    });
-
-    $("buyList").addEventListener("click", function (e) {
-      var btn = e.target.closest("button[data-del]");
-      if (!btn) return;
-      if (!confirm("이 매수 기록을 삭제할까요?")) return;
-      Portfolio.removeBuy(btn.dataset.del);
-      renderHoldings();
-      renderChart();
-    });
-
-    $("spreadSettings").addEventListener("change", function (e) {
-      var input = e.target.closest("input[data-ccy]");
-      if (!input) return;
-      var code = input.dataset.ccy;
-      var spread = $("spread_" + code).value;
-      var pref = $("pref_" + code).value;
-      Portfolio.setSpread(code, spread, pref);
-      renderHoldings();
-    });
-
+  function wireBackup() {
     $("exportBtn").addEventListener("click", function () {
       var blob = new Blob([Portfolio.exportJSON()], { type: "application/json" });
       var a = document.createElement("a");
@@ -799,13 +721,12 @@
           Portfolio.importJSON(String(reader.result));
           $("backupMsg").textContent = "가져왔습니다.";
           $("ratesUrl").value = FxDomestic.configuredUrl();
-          renderHoldings();
-          renderPlan();
+          $("liveUrl").value = FxDomestic.configuredLiveUrl();
           renderDutyFree();
           renderAlerts();
           renderAlertBanner();
           renderChart();
-          syncDomestic(); // 가져온 매수 기록의 날짜들도 국내 환율을 채워야 한다
+          syncDomestic();
         } catch (err) {
           $("backupMsg").textContent = "가져오기 실패: " + err.message;
         }
@@ -815,40 +736,18 @@
     });
 
     $("resetBtn").addEventListener("click", function () {
-      if (!confirm("매수 기록·계획·설정을 모두 지웁니다. 되돌릴 수 없습니다. 계속할까요?")) return;
+      if (!confirm("관심 상품·알림·설정을 모두 지웁니다. 되돌릴 수 없습니다. 계속할까요?")) return;
       Portfolio.resetAll();
       FxDomestic.clear();
       bumpDomestic();
       $("ratesUrl").value = "";
+      $("liveUrl").value = "";
       renderHeader();
-      renderHoldings();
-      renderPlan();
       renderDutyFree();
       renderAlerts();
       renderChart();
       $("backupMsg").textContent = "전체 삭제했습니다.";
     });
-  }
-
-  function updateBuyPreview() {
-    var code = $("buyCcy").value;
-    var meta = FxData.CURRENCIES[code];
-    var krw = Number($("buyKrw").value);
-    var foreign = Number($("buyForeign").value);
-    if (!(krw > 0) || !(foreign > 0)) {
-      $("buyPreview").textContent = "";
-      return;
-    }
-    var er = krw / (foreign / meta.unit);
-    $("buyPreview").textContent = "실효환율 " + meta.unitLabel + "당 " + rate(er) + "원";
-  }
-
-  function renderHoldings() {
-    renderHoldingSummary();
-    renderBuyList();
-    renderSpreadSettings();
-    renderRatesStatus();
-    renderLiveStatus();
   }
 
   // ---------------------------------------------------------------------
@@ -982,373 +881,6 @@
       esc(FxDomestic.SOURCE_LABEL) +
       (updated ? '<br /><span class="muted">파일 갱신 ' + esc(String(updated).slice(0, 16).replace("T", " ")) + " UTC</span>" : "") +
       (state.domesticError ? '<br /><span class="neg">최근 갱신 실패: ' + esc(state.domesticError) + " (저장된 값 사용 중)</span>" : "");
-  }
-
-  function renderHoldingSummary() {
-    var box = $("holdingSummary");
-    var codes = Object.keys(FxData.CURRENCIES);
-    var cards = codes
-      .map(function (c) {
-        return Portfolio.summarize(c, ratesSeries(c));
-      })
-      .filter(Boolean);
-    var rateSource = FxDomestic.available() && FxDomestic.count() ? "국내 매매기준율" : "ECB 공시 환율";
-
-    if (!cards.length) {
-      box.innerHTML =
-        '<div class="card"><h2>아직 매수 기록이 없습니다</h2><p class="muted small">' +
-        "아래에 실제로 낸 원화와 받은 외화를 입력하면 평균단가·평가손익·환전 비용이 자동으로 계산됩니다." +
-        "</p></div>";
-      return;
-    }
-
-    box.innerHTML = cards
-      .map(function (h) {
-        var conc = h.concentration;
-        var concHtml = "";
-        if (conc && conc.spanDays > 0) {
-          // halfWindowDays가 0이면 하루 안에 절반이 채워졌다는 뜻(한 건일 수도, 같은 날 여러 건일 수도).
-          // "0일 구간에 몰려 있다"는 표현은 오해를 부르므로 문장을 따로 쓴다.
-          var concText =
-            conc.halfWindowDays === 0
-              ? "금액의 절반 이상이 하루에 몰려 있습니다."
-              : "금액의 절반이 " + conc.halfWindowDays + "일 구간에 몰려 있습니다.";
-          concHtml =
-            '<p class="muted small mt">매수 기간 ' +
-            conc.spanDays +
-            "일 · " +
-            concText +
-            (conc.halfWindowDays * 4 < conc.spanDays ? " <strong>한 시점에 집중된 편입니다.</strong>" : "") +
-            "</p>";
-        }
-
-        return (
-          '<div class="card">' +
-          '<div class="card__head"><h2>' +
-          esc(h.meta.label) +
-          "</h2><span class=\"muted small\">" +
-          h.count +
-          "건 · " +
-          esc(h.firstDate) +
-          " ~ " +
-          esc(h.lastDate) +
-          " · " +
-          esc(rateSource) +
-          " 기준</span></div>" +
-          '<div class="stat-grid">' +
-          stat("보유", num(h.totalForeign, 2) + " " + h.meta.amountLabel) +
-          stat("투입 원화", won(h.totalKrw)) +
-          stat("평균단가", rate(h.avgRate) + "원 / " + h.meta.unitLabel) +
-          stat("현재 시장환율", rate(h.marketRate) + "원") +
-          stat("지금 팔면", rate(h.sellableRate) + "원", "스프레드 " + pct(h.spreadPct) + " 반영") +
-          stat("평가금액", won(h.valueKrw)) +
-          stat("평가손익", signedWon(h.pnl), signedPct(h.pnlPct), pnlClass(h.pnl)) +
-          stat("본전 시장환율", rate(h.breakEvenMarketRate) + "원", "여기까지 와야 손실 0") +
-          "</div>" +
-          // fxCost가 음수면 시장환율보다 유리하게 환전했다는 뜻이라 문장을 뒤집어야 한다.
-          // ("환전 비용으로 -9만원을 냈습니다" 같은 문장이 나오면 안 됨)
-          (isFinite(h.fxCost)
-            ? '<p class="note mt">' +
-              (h.fxCost >= 0
-                ? "지금까지 <strong>환전 비용으로 " +
-                  won(h.fxCost) +
-                  "</strong>을 냈습니다 (투입액의 " +
-                  pct(h.fxCostPct) +
-                  ")."
-                : "기록상으로는 같은 날 시장환율보다 <strong>" +
-                  won(-h.fxCost) +
-                  " 유리하게</strong> 환전했습니다 (투입액의 " +
-                  pct(-h.fxCostPct) +
-                  ").") +
-              ' <span class="muted">매수일 ' +
-              esc(rateSource) +
-              "과 실제 지불액의 차이를 모두 더한 값입니다." +
-              (rateSource === "ECB 공시 환율"
-                ? " ECB 기준이라 국내 고시환율과는 0.4% 안팎 차이가 날 수 있습니다 — 「국내 고시환율 연동」을 설정하면 정확해집니다."
-                : "") +
-              "</span></p>"
-            : "") +
-          concHtml +
-          "</div>"
-        );
-      })
-      .join("");
-  }
-
-  function stat(label, value, sub, cls) {
-    return (
-      '<div class="stat"><div class="stat__label">' +
-      esc(label) +
-      '</div><div class="stat__value ' +
-      (cls || "") +
-      '">' +
-      value +
-      "</div>" +
-      (sub ? '<div class="stat__sub">' + sub + "</div>" : "") +
-      "</div>"
-    );
-  }
-
-  function renderBuyList() {
-    var buys = Portfolio.load().buys;
-    var box = $("buyList");
-    if (!buys.length) {
-      box.innerHTML = '<p class="muted small">기록이 없습니다.</p>';
-      return;
-    }
-
-    var rowsHtml = buys
-      .slice()
-      .reverse()
-      .map(function (b) {
-        var meta = FxData.CURRENCIES[b.code];
-        var er = Portfolio.effectiveRate(b);
-        var s = ratesSeries(b.code);
-        var mkt = s && s.rows && s.rows.length ? FxData.rateOn(s.rows, b.date) : null;
-        var costPct = mkt ? ((er - mkt.rate) / mkt.rate) * 100 : NaN;
-        return (
-          "<tr>" +
-          "<td>" +
-          esc(b.date) +
-          "</td>" +
-          "<td>" +
-          esc(meta.label) +
-          "</td>" +
-          "<td>" +
-          won(b.krw) +
-          "</td>" +
-          "<td>" +
-          num(b.foreign, 2) +
-          "</td>" +
-          "<td><strong>" +
-          rate(er) +
-          "</strong></td>" +
-          "<td>" +
-          (mkt ? rate(mkt.rate) : "—") +
-          "</td>" +
-          '<td class="' +
-          (isFinite(costPct) && costPct > 0 ? "neg" : "") +
-          '">' +
-          (isFinite(costPct) ? signedPct(costPct) : "—") +
-          "</td>" +
-          "<td>" +
-          esc(b.memo) +
-          "</td>" +
-          '<td><button type="button" class="link-btn" data-del="' +
-          esc(b.id) +
-          '">삭제</button></td>' +
-          "</tr>"
-        );
-      })
-      .join("");
-
-    box.innerHTML =
-      '<div class="table-scroll"><table class="data-table">' +
-      "<thead><tr><th>날짜</th><th>통화</th><th>지불 원화</th><th>받은 외화</th><th>실효환율</th><th>그날 시장환율</th><th>차이</th><th>메모</th><th></th></tr></thead>" +
-      "<tbody>" +
-      rowsHtml +
-      "</tbody></table></div>" +
-      '<p class="muted small mt">「차이」는 그날 시장환율보다 얼마나 비싸게 샀는지 — 스프레드·수수료로 나간 몫입니다.</p>';
-  }
-
-  function renderSpreadSettings() {
-    var s = Portfolio.getSettings();
-    $("spreadSettings").innerHTML = Object.keys(FxData.CURRENCIES)
-      .map(function (c) {
-        var m = FxData.CURRENCIES[c];
-        return (
-          "<label>" +
-          esc(m.label) +
-          " 스프레드 (%)<input id=\"spread_" +
-          c +
-          '" data-ccy="' +
-          c +
-          '" type="number" step="0.01" min="0" max="10" value="' +
-          esc(s.sellSpreadPct[c]) +
-          '" /></label>' +
-          "<label>" +
-          esc(m.label) +
-          " 우대율 (%)<input id=\"pref_" +
-          c +
-          '" data-ccy="' +
-          c +
-          '" type="number" step="1" min="0" max="100" value="' +
-          esc(s.preferentialPct[c]) +
-          '" /></label>'
-        );
-      })
-      .join("");
-  }
-
-  // ---------------------------------------------------------------------
-  // 계획 탭
-  // ---------------------------------------------------------------------
-
-  function wirePlan() {
-    $("dcaRange").addEventListener("click", function (e) {
-      var btn = e.target.closest("button[data-months]");
-      if (!btn) return;
-      state.dcaMonths = Number(btn.dataset.months);
-      Array.prototype.forEach.call($("dcaRange").children, function (b) {
-        b.classList.toggle("is-active", b === btn);
-      });
-      renderDca();
-    });
-
-    ["planTotal", "planCount"].forEach(function (id) {
-      $(id).addEventListener("input", updatePlanPreview);
-    });
-
-    $("planForm").addEventListener("submit", function (e) {
-      e.preventDefault();
-      var box = $("planError");
-      box.hidden = true;
-      try {
-        Portfolio.addPlan({
-          code: $("planCcy").value,
-          totalKrw: $("planTotal").value,
-          count: $("planCount").value,
-          periodUnit: $("planPeriod").value,
-          startDate: $("planStart").value,
-        });
-        renderPlanList();
-        updatePlanPreview();
-      } catch (err) {
-        box.textContent = err.message;
-        box.hidden = false;
-      }
-    });
-
-    $("planList").addEventListener("click", function (e) {
-      var btn = e.target.closest("button[data-act]");
-      if (!btn) return;
-      if (btn.dataset.act === "del") {
-        if (!confirm("이 계획을 삭제할까요?")) return;
-        Portfolio.removePlan(btn.dataset.id);
-      } else {
-        Portfolio.markPlanExecuted(btn.dataset.id, btn.dataset.act === "done" ? 1 : -1);
-      }
-      renderPlanList();
-    });
-  }
-
-  function updatePlanPreview() {
-    var total = Number($("planTotal").value);
-    var count = Number($("planCount").value);
-    $("planPreview").textContent =
-      total > 0 && count >= 2 ? "1회당 " + won(total / count) : "";
-  }
-
-  function renderPlan() {
-    renderDca();
-    renderPlanList();
-  }
-
-  function renderDca() {
-    var box = $("dcaCompare");
-    var codes = Object.keys(FxData.CURRENCIES);
-    var html = codes
-      .map(function (c) {
-        var s = state.series[c];
-        if (!s || !s.rows || !s.rows.length) return "";
-        var r = Portfolio.compareDcaVsLumpSum(s.rows, { months: state.dcaMonths, totalKrw: 12000000 });
-        if (!r) return "";
-        var m = FxData.CURRENCIES[c];
-        var better = r.dcaAdvantagePct > 0;
-        return (
-          '<div class="dca-block">' +
-          "<h3>" +
-          esc(m.label) +
-          '</h3><p class="muted small">' +
-          esc(r.startDate) +
-          " ~ " +
-          esc(r.endDate) +
-          " · 총 " +
-          won(r.totalKrw) +
-          " · " +
-          r.installments +
-          "회 분할 기준</p>" +
-          '<div class="stat-grid stat-grid--2">' +
-          stat("일시불 평균단가", rate(r.lumpAvgRate) + "원") +
-          stat("분할매수 평균단가", rate(r.dcaAvgRate) + "원") +
-          "</div>" +
-          '<p class="note">이 구간에서는 <strong>' +
-          (better ? "분할매수" : "일시불") +
-          "</strong>의 평균단가가 " +
-          pct(Math.abs(r.dcaAdvantagePct)) +
-          " 더 낮았습니다." +
-          "</p>" +
-          "</div>"
-        );
-      })
-      .join("");
-
-    box.innerHTML =
-      html ||
-      '<p class="muted small">비교할 데이터가 부족합니다.</p>';
-  }
-
-  function renderPlanList() {
-    var plans = Portfolio.load().plans;
-    var box = $("planList");
-    if (!plans.length) {
-      box.innerHTML = '<p class="muted small">진행 중인 계획이 없습니다.</p>';
-      return;
-    }
-    box.innerHTML = plans
-      .map(function (p) {
-        var st = Portfolio.planStatus(p);
-        var m = FxData.CURRENCIES[p.code];
-        return (
-          '<div class="plan-item">' +
-          '<div class="plan-item__head"><strong>' +
-          esc(m.label) +
-          "</strong> " +
-          won(p.totalKrw) +
-          " · " +
-          p.count +
-          "회 " +
-          (p.periodUnit === "week" ? "매주" : "매월") +
-          '<button type="button" class="link-btn" data-act="del" data-id="' +
-          esc(p.id) +
-          '">삭제</button></div>' +
-          '<div class="progress"><div class="progress__bar" style="width:' +
-          st.donePct.toFixed(1) +
-          '%"></div></div>' +
-          '<div class="plan-item__body">' +
-          "<span>" +
-          p.done +
-          " / " +
-          p.count +
-          "회 완료 · 1회당 " +
-          won(st.perAmount) +
-          "</span>" +
-          (st.complete
-            ? "<span>계획 완료</span>"
-            : "<span>다음 예정 <strong>" +
-              esc(st.nextDate) +
-              "</strong>" +
-              (st.overdue ? ' <span class="badge badge--warn">지남</span>' : "") +
-              " · 남은 금액 " +
-              won(st.remainingKrw) +
-              "</span>") +
-          "</div>" +
-          '<div class="form-actions form-actions--left">' +
-          '<button type="button" data-act="done" data-id="' +
-          esc(p.id) +
-          '"' +
-          (st.complete ? " disabled" : "") +
-          ">1회 실행 처리</button>" +
-          '<button type="button" class="ghost" data-act="undo" data-id="' +
-          esc(p.id) +
-          '"' +
-          (p.done === 0 ? " disabled" : "") +
-          ">되돌리기</button>" +
-          "</div>" +
-          "</div>"
-        );
-      })
-      .join("");
   }
 
   // ---------------------------------------------------------------------
@@ -1711,195 +1243,6 @@
       verdict;
   }
 
-
-  // ---------------------------------------------------------------------
-  // 모델 성적표 탭
-  // ---------------------------------------------------------------------
-
-  function renderModels() {
-    var code = state.modelCcy;
-    var s = state.series[code];
-    if (!s || !s.rows || s.rows.length < FxModels.MIN_TRAIN + 30) {
-      $("predictBox").innerHTML = '<p class="muted small">데이터가 부족합니다.</p>';
-      $("backtestBox").innerHTML = "";
-      return;
-    }
-
-    if (state.backtestCache[code]) {
-      drawModels(code, s, state.backtestCache[code]);
-      return;
-    }
-
-    // 수만 번 예측을 돌리므로 먼저 안내를 그리고 다음 틱에 계산한다(화면이 멈춘 것처럼 보이지 않게).
-    $("backtestBox").innerHTML = '<p class="loading">백테스트 계산 중...</p>';
-    setTimeout(function () {
-      var bt = FxModels.backtest(s.rows, HORIZONS);
-      state.backtestCache[code] = bt;
-      drawModels(code, s, bt);
-    }, 20);
-  }
-
-  function drawModels(code, s, bt) {
-    var meta = FxData.CURRENCIES[code];
-
-    // --- 현재 예측값. 성적(Theil's U)을 옆에 붙이지 않으면 아예 표시하지 않는다.
-    var scoreByKey = {};
-    if (bt) {
-      bt.horizons.forEach(function (hz) {
-        hz.results.forEach(function (r) {
-          scoreByKey[hz.h + ":" + r.key] = r;
-        });
-      });
-    }
-
-    var predHtml = HORIZONS.map(function (h) {
-      var preds = FxModels.predictNow(s.rows, h);
-      var rows = preds
-        .map(function (p) {
-          var sc = scoreByKey[h + ":" + p.key];
-          return (
-            "<tr><th>" +
-            esc(p.label) +
-            "</th><td>" +
-            rate(p.value) +
-            "원</td><td class=\"" +
-            pnlClass(p.changePct) +
-            '">' +
-            signedPct(p.changePct) +
-            "</td><td>" +
-            (sc ? (sc.isBaseline ? "기준선" : "U " + num(sc.theilU, 3)) : "—") +
-            "</td><td>" +
-            (sc && isFinite(sc.hitRate) ? pct(sc.hitRate, 1) : "—") +
-            "</td></tr>"
-          );
-        })
-        .join("");
-      return (
-        "<h3>" +
-        h +
-        "영업일 뒤</h3>" +
-        '<div class="table-scroll"><table class="data-table"><thead><tr><th>모델</th><th>예측값</th><th>변화</th><th>Theil&rsquo;s U</th><th>방향 적중률</th></tr></thead><tbody>' +
-        rows +
-        "</tbody></table></div>"
-      );
-    }).join("");
-
-    $("predictBox").innerHTML =
-      '<p class="muted small">' +
-      esc(meta.label) +
-      " · " +
-      esc(meta.unitLabel) +
-      " 기준 · 현재 " +
-      rate(s.lastRate) +
-      "원 (" +
-      esc(s.lastDate) +
-      ")</p>" +
-      predHtml +
-      '<p class="note note--warn mt">위 숫자를 근거로 매수 시점을 정하지 마세요. 오른쪽 두 열이 그 이유입니다.</p>';
-
-    // --- 백테스트 성적표
-    if (!bt) {
-      $("backtestBox").innerHTML = '<p class="muted small">백테스트를 돌리기에 데이터가 부족합니다.</p>';
-      return;
-    }
-
-    $("backtestMeta").textContent =
-      esc(meta.label) +
-      " · 평가 구간 " +
-      bt.trainStart +
-      " ~ " +
-      bt.dataTo +
-      " (첫 " +
-      bt.minTrain +
-      "영업일은 학습용으로만 사용)";
-
-    var winners = 0;
-    var significant = 0;
-
-    var tables = bt.horizons
-      .map(function (hz) {
-        var body = hz.results
-          .map(function (r) {
-            if (!r.isBaseline && r.beatsRandomWalk) winners++;
-            if (!r.isBaseline && r.directionSignificant) significant++;
-            var verdict = r.isBaseline
-              ? '<span class="muted">기준선</span>'
-              : r.beatsRandomWalk
-              ? '<span class="pos">랜덤워크보다 오차 작음</span>'
-              : '<span class="neg">랜덤워크보다 못함</span>';
-            var dirVerdict = r.isBaseline
-              ? '<span class="muted">방향을 찍지 않음</span>'
-              : r.directionSignificant
-              ? '<span class="pos">동전 던지기와 다름</span>'
-              : '<span class="muted">동전 던지기와 구분 불가</span>';
-            return (
-              "<tr>" +
-              "<th>" +
-              esc(r.label) +
-              "</th>" +
-              "<td>" +
-              num(r.rmse, 3) +
-              "</td>" +
-              "<td>" +
-              num(r.mae, 3) +
-              "</td>" +
-              "<td><strong>" +
-              (r.isBaseline ? "1.000" : num(r.theilU, 3)) +
-              "</strong></td>" +
-              "<td>" +
-              verdict +
-              "</td>" +
-              "<td>" +
-              (isFinite(r.hitRate)
-                ? pct(r.hitRate, 1) +
-                  '<br /><span class="muted small">95% CI ' +
-                  num(r.hitCiLow, 1) +
-                  "~" +
-                  num(r.hitCiHigh, 1) +
-                  "%</span>"
-                : "—") +
-              "</td>" +
-              "<td>" +
-              dirVerdict +
-              "</td>" +
-              "</tr>"
-            );
-          })
-          .join("");
-
-        return (
-          "<h3>" +
-          hz.h +
-          "영업일 예측 <span class=\"muted small\">(" +
-          hz.count.toLocaleString("ko-KR") +
-          "회 예측)</span></h3>" +
-          '<div class="table-scroll"><table class="data-table"><thead><tr>' +
-          "<th>모델</th><th>RMSE</th><th>MAE</th><th>Theil&rsquo;s U</th><th>오차 판정</th><th>방향 적중률</th><th>방향 판정</th>" +
-          "</tr></thead><tbody>" +
-          body +
-          "</tbody></table></div>"
-        );
-      })
-      .join("");
-
-    var total = bt.horizons.length * (FxModels.MODELS.length - 1);
-    var conclusion =
-      '<div class="note note--warn mt"><strong>결론:</strong> 랜덤워크보다 오차가 작았던 경우 ' +
-      winners +
-      " / " +
-      total +
-      "건, 방향 적중률이 동전 던지기와 통계적으로 구분된 경우 " +
-      significant +
-      " / " +
-      total +
-      "건입니다. " +
-      (winners === 0 && significant === 0
-        ? "어떤 모델도 아무것도 안 하는 것보다 낫지 않았습니다 — 예측으로 매수 시점을 정할 근거가 없다는 뜻입니다."
-        : "일부 항목이 기준선을 넘었더라도, 겹치는 구간 때문에 신뢰구간이 좁게 나온다는 점을 감안하면 실전 우위로 보기는 어렵습니다.") +
-      "</div>";
-
-    $("backtestBox").innerHTML = tables + conclusion;
-  }
 
   document.addEventListener("DOMContentLoaded", init);
 })();
