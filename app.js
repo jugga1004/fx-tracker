@@ -122,7 +122,7 @@
     wireDutyFree();
 
     $("footerSource").textContent =
-      "시계열(차트·통계): " +
+      "추이 차트: " +
       FxData.sourceLabel() +
       ", 최근 " +
       FxData.HISTORY_YEARS +
@@ -350,12 +350,12 @@
       statusHtml = liveAny
         ? "위 환율은 <strong>실시간</strong> (" +
           esc(FxDomestic.liveRatesSource() || "은행 고시회차") +
-          ") · 차트·면세점은 <strong>확정 고시</strong> 기준 (매매기준율 " +
+          ") · 면세점은 <strong>확정 고시</strong> (매매기준율 " +
           esc(FxDomestic.latestDate() || "—") +
-          ")"
+          ") · 추이는 ECB 시계열"
         : "국내 매매기준율 <strong>" +
           esc(FxDomestic.latestDate() || "—") +
-          "</strong> (한국수출입은행) · 차트·통계는 ECB 시계열 기준";
+          "</strong> (한국수출입은행) · 추이는 ECB 시계열 기준";
     } else if (ecbAny) {
       statusHtml = "기준일 <strong>" + esc(ecbAny.lastDate) + "</strong> · ECB 공시 기준(은행 고시환율과 다름)";
     }
