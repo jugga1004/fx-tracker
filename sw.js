@@ -6,7 +6,7 @@
 //
 // 참고: 서비스워커는 https 또는 localhost에서만 등록된다. index.html을 file://로 열면
 // 등록이 안 되지만, app.js가 그 경우를 건너뛰도록 처리해두어서 앱 자체는 정상 동작한다.
-var CACHE_NAME = "fx-tracker-v5";
+var CACHE_NAME = "fx-tracker-v6";
 var APP_SHELL = [
   "./",
   "./index.html",
@@ -19,6 +19,10 @@ var APP_SHELL = [
   "./chart.js",
   "./manifest.json",
   "./icon.svg",
+  "./icon-192.png",
+  "./icon-512.png",
+  "./icon-maskable-512.png",
+  "./apple-touch-icon.png",
 ];
 
 self.addEventListener("install", function (event) {

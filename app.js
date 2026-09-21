@@ -120,6 +120,7 @@
     wireOverview();
     wireBackup();
     wireDutyFree();
+    wireInstall();
 
     $("footerSource").textContent =
       "추이 차트: " +
@@ -421,6 +422,82 @@
     $("legendMa60").hidden = !show60;
 
     Chart.line(box, { rows: rows, height: 280, ma: ma });
+  }
+
+  // ---------------------------------------------------------------------
+  // 홈 화면 설치
+  // ---------------------------------------------------------------------
+  // 안드로이드·데스크톱 크롬은 beforeinstallprompt를 던져주므로 버튼 한 번으로 끝난다.
+  // iOS 사파리엔 그런 이벤트가 자체가 없다 — 공유 시트를 거쳐야 해서 문구로만 안내한다.
+  // 이미 홈 화면에서 연 경우나 한 번 닫은 경우에는 아무것도 띄우지 않는다.
+
+  var deferredInstall = null;
+  var INSTALL_HIDE_KEY = "fx.installHidden";
+
+  function isStandalone() {
+    var mm = window.matchMedia && window.matchMedia("(display-mode: standalone)");
+    // navigator.standalone은 iOS 사파리 전용이고, iOS는 display-mode를 안 알려준다.
+    return (mm && mm.matches) || window.navigator.standalone === true;
+  }
+
+  function isIosSafari() {
+    var ua = navigator.userAgent;
+    // 아이패드는 iPadOS 13부터 데스크톱 UA를 쓴다 — 터치 포인트 수로 가려낸다.
+    var ios = /iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+    // 크롬·파이어폭스의 iOS판은 사파리 UA를 달고 다니지만 홈 화면 추가 메뉴가 없다.
+    return ios && !/CriOS|FxiOS|EdgiOS|OPiOS/.test(ua);
+  }
+
+  function dismissInstall(remember) {
+    $("installBox").hidden = true;
+    if (!remember) return;
+    try {
+      localStorage.setItem(INSTALL_HIDE_KEY, "1");
+    } catch (err) {
+      /* 사파리 사생활 보호 모드 등 — 안내가 다시 떠도 앱 동작엔 지장 없다 */
+    }
+  }
+
+  function wireInstall() {
+    var box = $("installBox");
+    if (!box || isStandalone()) return;
+    try {
+      if (localStorage.getItem(INSTALL_HIDE_KEY) === "1") return;
+    } catch (err) {
+      /* 못 읽으면 그냥 안내를 띄운다 */
+    }
+
+    $("installClose").addEventListener("click", function () {
+      dismissInstall(true);
+    });
+
+    $("installBtn").addEventListener("click", function () {
+      if (!deferredInstall) return;
+      deferredInstall.prompt();
+      deferredInstall.userChoice.then(function () {
+        // 거절해도 이벤트는 다시 오지 않는다. 계속 띄워둬도 눌릴 게 없으니 닫는다.
+        deferredInstall = null;
+        dismissInstall(false);
+      });
+    });
+
+    window.addEventListener("beforeinstallprompt", function (e) {
+      e.preventDefault(); // 크롬 기본 배너를 막고 우리 버튼으로 받는다
+      deferredInstall = e;
+      $("installText").textContent = "홈 화면에 앱처럼 설치할 수 있습니다.";
+      $("installBtn").hidden = false;
+      box.hidden = false;
+    });
+
+    window.addEventListener("appinstalled", function () {
+      dismissInstall(true);
+    });
+
+    if (isIosSafari()) {
+      $("installText").innerHTML =
+        '홈 화면에 추가하려면 아래 <strong>공유</strong> 버튼 → <strong>홈 화면에 추가</strong>를 누르세요.';
+      box.hidden = false;
+    }
   }
 
   // ---------------------------------------------------------------------

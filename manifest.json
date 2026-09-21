@@ -1,14 +1,19 @@
 {
+  "id": "/fx-tracker/",
   "name": "환율 추적기",
   "short_name": "환율추적기",
-  "description": "달러·엔 매수 기록과 과거 환율 데이터를 확인하는 개인용 도구",
-  "start_url": "./index.html",
+  "description": "실시간 환율과 면세점 적용환율을 확인하는 개인용 도구",
+  "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#f7f7f8",
   "theme_color": "#1c7ed6",
+  "lang": "ko",
   "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
     { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
   ]
 }

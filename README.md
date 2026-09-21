@@ -6,6 +6,27 @@
 
 ## 무엇을 하나
 
+## 홈 화면에 설치
+
+https://jugga1004.github.io/fx-tracker/ 를 연 뒤:
+
+- **안드로이드 / 크롬** — 화면 위쪽 「설치」 버튼. 안 보이면 메뉴 → 앱 설치.
+- **아이폰 / 사파리** — 공유 버튼 → 홈 화면에 추가. (사파리에서만 됩니다. iOS의 크롬·파이어폭스에는 이 메뉴가 없습니다.)
+
+아이콘은 `icon.svg` 하나를 원본으로 삼아 굽습니다. 이 PC엔 Node도 파이썬도 없어서 크롬 헤드리스 스크린샷으로 래스터화합니다:
+
+```
+chrome --headless --screenshot=icon-512.png --window-size=512,512 \
+       --force-device-scale-factor=1 --default-background-color=00000000 <svg를 감싼 html>
+```
+
+- `icon-192.png` / `icon-512.png` — 모서리 둥근 판, 바깥은 투명 (`purpose: any`)
+- `icon-maskable-512.png` — 꽉 찬 배경 + 내용을 72%로 축소 (`purpose: maskable`). 안드로이드가 원형·물방울로 잘라내도 살아남아야 한다
+- `apple-touch-icon.png` — 180px 정사각, 모서리를 깎지 않는다. iOS가 자기 마스크를 씌운다
+
+**iOS 사파리는 manifest를 읽지 않습니다.** `apple-touch-icon`이 PNG가 아니면 홈 화면에 아이콘 대신 페이지 축소 이미지가 박힙니다 — SVG로 두면 조용히 망가집니다.
+
+
 | 탭 | 내용 |
 |---|---|
 | 현황 | USD·JPY 차트(이동평균), 과거 분포에서의 위치(백분위·이격도·52주), 변동성 확률구간, 목표환율 알림, 설정·백업 |

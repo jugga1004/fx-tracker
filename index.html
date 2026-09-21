@@ -2,22 +2,33 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, viewport-fit=cover" />
 <title>환율 추적기</title>
 <link rel="manifest" href="manifest.json" />
 <meta name="theme-color" content="#1c7ed6" />
 <meta name="mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
 <meta name="apple-mobile-web-app-title" content="환율추적기" />
-<link rel="apple-touch-icon" href="icon.svg" />
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png" />
 <link rel="icon" href="icon.svg" type="image/svg+xml" />
+<link rel="icon" sizes="192x192" href="icon-192.png" type="image/png" />
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <header class="app-header">
     <h1>환율 추적기</h1>
     <p class="app-header__sub">달러·엔 매수 기록과 과거 데이터 확인용 개인 도구</p>
+
+    <!-- 홈 화면 설치 안내. 안드로이드·크롬은 beforeinstallprompt를 잡아 버튼 하나로 끝나지만
+         iOS 사파리엔 그런 이벤트가 없어 공유 시트를 거치라는 문구로만 안내한다.
+         이미 홈 화면에서 연 경우(standalone)나 한 번 닫은 경우에는 띄우지 않는다. -->
+    <div id="installBox" class="install-box" hidden>
+      <span id="installText" class="install-box__text"></span>
+      <button type="button" id="installBtn" hidden>설치</button>
+      <button type="button" id="installClose" class="ghost install-box__close" aria-label="안내 닫기">✕</button>
+    </div>
+
 
     <!-- 탭이 환율 카드 위에 온다. 카드는 탭마다 보이거나 숨는데(면세점환율 탭에서는 숨김)
          그 아래에 탭이 있으면 탭 위치가 오르내려서 누르려던 자리를 놓친다. -->

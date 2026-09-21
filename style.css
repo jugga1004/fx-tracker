@@ -36,7 +36,33 @@ body {
 main {
   max-width: 860px;
   margin: 0 auto;
-  padding: 0 12px 24px;
+  padding: 0 calc(12px + env(safe-area-inset-right, 0px)) calc(24px + env(safe-area-inset-bottom, 0px))
+    calc(12px + env(safe-area-inset-left, 0px));
+}
+
+/* 홈 화면 설치 안내. 안내 한 줄이라 헤더 안에서 조용히 자리만 차지한다. */
+.install-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 860px;
+  margin: 10px auto 0;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  text-align: left;
+  font-size: 0.82rem;
+}
+
+.install-box__text {
+  flex: 1;
+  color: var(--color-text-muted);
+}
+
+.install-box__close {
+  padding: 2px 8px;
+  line-height: 1.2;
 }
 
 h2 {
@@ -57,7 +83,8 @@ p {
 /* ------------------------------------------------------------------ 헤더 */
 
 .app-header {
-  padding: 18px 12px 10px;
+  padding: calc(18px + env(safe-area-inset-top, 0px)) calc(12px + env(safe-area-inset-right, 0px)) 10px
+    calc(12px + env(safe-area-inset-left, 0px));
   text-align: center;
   max-width: 860px;
   margin: 0 auto;
