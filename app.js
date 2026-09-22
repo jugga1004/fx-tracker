@@ -12,6 +12,7 @@
     ccy: "USD",
     costCcy: "JPY", // 결제비용 탭은 여행지 통화가 기본이라 엔으로 연다
     costAmount: 100000,
+    dfPayMethod: "card", // 현지 구매가를 어떤 결제 수단으로 환산할지
     rangeDays: 0, // 0보다 크면 일 단위, 아니면 rangeMonths를 쓴다
     rangeMonths: 12,
     domesticError: null, // 국내 고시환율 연동 실패 메시지 (있으면 ECB로 폴백)
@@ -699,12 +700,21 @@
       var box = $("dfItemError");
       box.hidden = true;
       try {
-        Portfolio.addItem({ name: $("dfItemName").value, usd: $("dfItemUsd").value, url: $("dfItemUrl").value });
+        Portfolio.addItem({
+          name: $("dfItemName").value,
+          usd: $("dfItemUsd").value,
+          url: $("dfItemUrl").value,
+          localPrice: $("dfItemLocal").value,
+          localCcy: $("dfItemLocalCcy").value,
+          domesticKrw: $("dfItemDomestic").value,
+        });
         $("dfItemName").value = "";
         $("dfItemUsd").value = "";
         $("dfItemUrl").value = "";
+        $("dfItemLocal").value = "";
+        $("dfItemDomestic").value = "";
         updateDfItemPreview();
-        renderDfItems();
+        renderDutyFree(); // 합계·비교표·면세한도까지 한꺼번에 바뀐다
       } catch (err) {
         box.textContent = err.message;
         box.hidden = false;
@@ -744,12 +754,29 @@
       var btn = e.target.closest("button[data-del]");
       if (!btn) return;
       Portfolio.removeItem(btn.dataset.del);
-      renderDfItems();
+      renderDutyFree();
+    });
+
+    // 결제 수단 토글과 한도·세율 입력은 카드를 다시 그릴 때마다 새로 생긴다.
+    // 그래서 개별 요소가 아니라 컨테이너에 한 번만 걸어 둔다.
+    $("dfCompare").addEventListener("click", function (e) {
+      var btn = e.target.closest("button[data-pay]");
+      if (!btn) return;
+      state.dfPayMethod = btn.dataset.pay;
+      renderDfCompare();
+    });
+
+    $("dfAllowance").addEventListener("change", function (e) {
+      if (!e.target.closest("#dutyAllowance, #dutyTaxPct")) return;
+      Portfolio.setDuty($("dutyAllowance").value, $("dutyTaxPct").value);
+      renderDutyFree();
     });
   }
 
   function renderDutyFree() {
     renderDfEstimate();
+    renderDfCompare();
+    renderDfAllowance();
     renderDfWeek();
     renderDfItems();
   }
@@ -941,6 +968,204 @@
       "</tbody></table></div>" +
       '<p class="muted small mt">고시일이 「이어짐」이면 그날 새 고시가 없어 직전 영업일 값이 그대로 적용된 것입니다(주말·공휴일).</p>' +
       "</div>";
+  }
+
+  // ---------------------------------------------------------------------
+  // 어디서 사는 게 싼가 — 면세점 vs 현지 vs 국내
+  // ---------------------------------------------------------------------
+  // 면세점이 늘 싼 게 아니다. 적용환율에 스프레드가 없는 건 맞지만, 현지
+  // 정가가 더 낮거나 국내 할인가가 더 낮은 경우가 흔하다. 게다가 면세한도를
+  // 넘기면 초과분에 세금이 붙어 순위가 뒤집힌다 — 그 지점을 짚는 게 목표다.
+
+  var DF_PAY_METHODS = [
+    { key: "card", label: "카드" },
+    { key: "cash", label: "현찰 환전" },
+    { key: "travel", label: "트래블 카드" },
+  ];
+
+  // 선택한 결제 수단의 실효환율(원 / 기준단위)을 꺼낸다.
+  function payRate(code, methodKey) {
+    var base = FxDomestic.latest(code);
+    if (!base) return NaN;
+    var applied = FxDomestic.appliedOn(code, FxData.todayISO());
+    var rows = Cost.methods(base.rate, applied ? applied.rate : NaN, Portfolio.costOptions(code));
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].key === methodKey) return rows[i].rate;
+    }
+    return NaN;
+  }
+
+  // 한 상품의 세 가격을 원화로 맞춰 낸다. 없는 값은 NaN으로 두고 화면에서 '—'.
+  function itemPrices(it) {
+    var applied = dfTodayRate();
+    var dutyFree = applied ? it.usd * applied.rate : NaN;
+
+    var local = NaN;
+    if (it.localPrice > 0) {
+      var meta = FxData.CURRENCIES[it.localCcy] || FxData.CURRENCIES.JPY;
+      var r = payRate(it.localCcy, state.dfPayMethod);
+      if (isFinite(r)) local = (it.localPrice / meta.unit) * r;
+    }
+
+    var domestic = it.domesticKrw > 0 ? it.domesticKrw : NaN;
+    return { dutyFree: dutyFree, local: local, domestic: domestic };
+  }
+
+  function renderDfCompare() {
+    var box = $("dfCompare");
+    if (!box) return;
+
+    var items = Portfolio.listItems().filter(function (it) {
+      return it.localPrice > 0 || it.domesticKrw > 0;
+    });
+    if (!items.length) {
+      box.innerHTML = "";
+      return;
+    }
+
+    var duty = dutyState();
+    var taxMult = duty.overLimit ? 1 + duty.taxPct / 100 : 1;
+
+    var rows = items
+      .map(function (it) {
+        var p = itemPrices(it);
+        // 한도를 넘긴 뒤 더 사는 물건에는 간이세율이 붙는다. 그 세율을 얹은 값으로
+        // 비교해야 "면세점이 오히려 비싼" 역전이 보인다.
+        var dutyTaxed = isFinite(p.dutyFree) ? p.dutyFree * taxMult : NaN;
+        var cands = [
+          { key: "duty", label: "면세점", krw: dutyTaxed },
+          { key: "local", label: "현지", krw: p.local },
+          { key: "dom", label: "국내", krw: p.domestic },
+        ].filter(function (c) {
+          return isFinite(c.krw);
+        });
+        cands.sort(function (a, b) {
+          return a.krw - b.krw;
+        });
+        var best = cands.length ? cands[0] : null;
+
+        function cell(v, isBest) {
+          if (!isFinite(v)) return '<td class="muted">—</td>';
+          return "<td" + (isBest ? ' class="pos"' : "") + ">" + won(v) + (isBest ? " ✓" : "") + "</td>";
+        }
+
+        var localMeta = FxData.CURRENCIES[it.localCcy] || FxData.CURRENCIES.JPY;
+        return (
+          "<tr><th>" +
+          (it.name ? esc(it.name) : '<span class="muted">이름 없음</span>') +
+          '<br /><span class="muted small">$' +
+          num(it.usd, 2) +
+          (it.localPrice > 0 ? " · 현지 " + num(it.localPrice, 0) + " " + esc(localMeta.amountLabel) : "") +
+          "</span></th>" +
+          cell(dutyTaxed, best && best.key === "duty") +
+          cell(p.local, best && best.key === "local") +
+          cell(p.domestic, best && best.key === "dom") +
+          "<td>" +
+          (best ? "<strong>" + esc(best.label) + "</strong>" : '<span class="muted">—</span>') +
+          "</td></tr>"
+        );
+      })
+      .join("");
+
+    var methodBtns = DF_PAY_METHODS.map(function (m) {
+      return (
+        '<button type="button" data-pay="' +
+        m.key +
+        '"' +
+        (m.key === state.dfPayMethod ? ' class="is-active"' : "") +
+        ">" +
+        esc(m.label) +
+        "</button>"
+      );
+    }).join("");
+
+    box.innerHTML =
+      '<div class="card"><div class="card__head"><h2>어디서 사는 게 싼가</h2>' +
+      '<div class="seg" id="dfPayToggle" role="group" aria-label="현지 결제 수단">' +
+      methodBtns +
+      "</div></div>" +
+      '<p class="muted small">현지 구매가는 위에서 고른 결제 수단의 실효환율로 환산합니다. ' +
+      (duty.overLimit
+        ? "<strong>면세 한도를 넘었기 때문에 면세점가에는 간이세율 " +
+          num(duty.taxPct, 0) +
+          "%를 얹어 비교합니다.</strong>"
+        : "면세 한도 안이라 면세점가에는 세금을 얹지 않았습니다.") +
+      "</p>" +
+      '<div class="table-scroll"><table class="data-table">' +
+      "<thead><tr><th>상품</th><th>면세점" +
+      (duty.overLimit ? "<br /><span class='muted small'>세금 포함</span>" : "") +
+      "</th><th>현지</th><th>국내</th><th>최저</th></tr></thead>" +
+      "<tbody>" +
+      rows +
+      "</tbody></table></div></div>";
+  }
+
+  // ---------------------------------------------------------------------
+  // 면세 한도
+  // ---------------------------------------------------------------------
+  // 한도를 넘기면 초과분에 세금이 붙는데, 그걸 계산에 넣는 사람이 거의 없다.
+  // 그래서 "면세점에서 샀는데 오히려 비싸게 산" 일이 생긴다.
+
+  function dutyState() {
+    var st = Portfolio.getSettings();
+    var totalUsd = Portfolio.listItems().reduce(function (sum, it) {
+      return sum + (it.usd > 0 ? it.usd : 0);
+    }, 0);
+    return Cost.dutyEstimate(totalUsd, st.dutyAllowanceUsd, st.dutySimpleTaxPct);
+  }
+
+  function renderDfAllowance() {
+    var box = $("dfAllowance");
+    if (!box) return;
+    if (!Portfolio.listItems().length) {
+      box.innerHTML = "";
+      return;
+    }
+
+    var d = dutyState();
+    var applied = dfTodayRate();
+    var taxKrw = applied ? d.taxUsd * applied.rate : NaN;
+
+    var body =
+      '<div class="stat-grid">' +
+      stat("면세점 합계", "$" + num(d.totalUsd, 2)) +
+      stat("면세 한도", "$" + num(d.allowanceUsd, 0), "여행자 휴대품 기준") +
+      stat(
+        "한도 초과",
+        d.overLimit ? "$" + num(d.overUsd, 2) : "없음",
+        d.overLimit ? null : "한도 안입니다",
+        d.overLimit ? "neg" : "pos"
+      ) +
+      stat(
+        "예상 세금",
+        d.overLimit ? "$" + num(d.taxUsd, 2) : "—",
+        d.overLimit && isFinite(taxKrw) ? "약 " + won(taxKrw) + " · 간이세율 " + num(d.taxPct, 0) + "%" : null,
+        d.overLimit ? "neg" : ""
+      ) +
+      "</div>";
+
+    var warn = d.overLimit
+      ? '<div class="note note--warn mt"><strong>한도를 $' +
+        num(d.overUsd, 2) +
+        " 넘었습니다.</strong> 초과분에는 관세와 부가세가 붙어, 여기서부터는 면세점가에 세금을 얹은 값이 실제 지불액입니다. " +
+        "세율은 품목마다 다르고 자진신고 감면도 따로 있어 위 금액은 <strong>대략</strong>입니다. 실제 세액은 관세청 확인이 필요하며, 세무 판단은 전문가 확인을 권장합니다.</div>"
+      : '<p class="muted small mt">한도 안이라 추가 세금이 없습니다. 주류·담배·향수는 이 한도와 별도로 계산되니 따로 확인하세요.</p>';
+
+    box.innerHTML =
+      '<div class="card"><h2>면세 한도</h2>' +
+      body +
+      warn +
+      '<details class="mt"><summary class="muted small">한도와 세율 고치기</summary>' +
+      '<div class="form-row mt">' +
+      '<label class="grow"><span>면세 한도 (미화)</span><input id="dutyAllowance" type="number" step="50" min="0" value="' +
+      d.allowanceUsd +
+      '" /></label>' +
+      '<label class="grow"><span>간이세율 (%)</span><input id="dutyTaxPct" type="number" step="1" min="0" value="' +
+      d.taxPct +
+      '" /></label>' +
+      "</div>" +
+      '<p class="muted small">기본값은 미화 800달러(2022년 9월 상향, 관세청)와 간이세율 20%입니다. ' +
+      "품목에 따라 다르니 실제 값으로 바꿔 쓰세요.</p></details></div>";
   }
 
   // ---------------------------------------------------------------------

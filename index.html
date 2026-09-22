@@ -111,12 +111,20 @@
         <p class="muted small">
           면세점 달러 표시가를 적어두면 적용환율이 바뀔 때마다 오늘·내일 원화가가 자동으로 갱신됩니다.
         </p>
-        <form id="dfItemForm" class="form-row">
-          <label class="grow"><span>상품명 (선택)</span><input id="dfItemName" type="text" placeholder="예: 향수 100ml" /></label>
-          <label class="grow"><span>가격 (달러)</span><input id="dfItemUsd" type="number" step="0.01" min="0" placeholder="120" required /></label>
-          <label class="grow"><span>상품 링크 (선택)</span><input id="dfItemUrl" type="url" placeholder="https://kor.lottedfs.com/..." /></label>
-          <button type="button" id="dfItemFetch" class="ghost">링크에서 가져오기</button>
-          <button type="submit">추가</button>
+        <form id="dfItemForm" autocomplete="off">
+          <div class="form-row">
+            <label class="grow"><span>상품명 (선택)</span><input id="dfItemName" type="text" placeholder="예: 향수 100ml" /></label>
+            <label class="grow"><span>면세점가 (달러)</span><input id="dfItemUsd" type="number" step="0.01" min="0" placeholder="120" required /></label>
+            <label class="grow"><span>상품 링크 (선택)</span><input id="dfItemUrl" type="url" placeholder="https://kor.lottedfs.com/..." /></label>
+            <button type="button" id="dfItemFetch" class="ghost">링크에서 가져오기</button>
+          </div>
+          <!-- 현지가·국내가는 선택이다. 넣으면 '어디서 사는 게 싼가' 표가 아래에 생긴다. -->
+          <div class="form-row">
+            <label class="grow"><span>현지 구매가 (선택)</span><input id="dfItemLocal" type="number" step="0.01" min="0" placeholder="18000" /></label>
+            <label><span>현지 통화</span><select id="dfItemLocalCcy"><option value="JPY">엔</option><option value="USD">달러</option></select></label>
+            <label class="grow"><span>국내 정가 (원, 선택)</span><input id="dfItemDomestic" type="number" step="100" min="0" placeholder="185000" /></label>
+            <button type="submit">추가</button>
+          </div>
         </form>
         <div id="dfItemPreview" class="muted small mt"></div>
         <div id="dfItemError" class="error-box" hidden></div>
@@ -128,6 +136,10 @@
           다만 카드 결제는 카드사 환율과 수수료가 따로 붙으니 결제 수단별 조건은 확인이 필요합니다.
         </p>
       </div>
+
+      <div id="dfCompare"></div>
+
+      <div id="dfAllowance"></div>
 
       <div id="dutyFreeWeek"></div>
 
