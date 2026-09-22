@@ -36,6 +36,7 @@
       <button type="button" class="mode-tab" data-view="overview" role="tab" aria-selected="true">현황</button>
       <button type="button" class="mode-tab" data-view="cost" role="tab" aria-selected="false">결제비용</button>
       <button type="button" class="mode-tab" data-view="dutyfree" role="tab" aria-selected="false">면세점환율</button>
+      <button type="button" class="mode-tab" data-view="flights" role="tab" aria-selected="false">항공권</button>
     </div>
 
     <div id="rateCards" class="rate-cards"></div>
@@ -159,6 +160,30 @@
       </div>
 
     </section>
+
+    <!-- ============================ 항공권 ============================ -->
+    <section id="view-flights" class="view" hidden>
+      <div class="card">
+        <h2>노선 등록</h2>
+        <p class="muted small">
+          노선과 날짜를 등록해두고 가격을 찍어 쌓으면 <strong>내가 본 가격 중 지금이 어디인지</strong>가 나옵니다.
+          예측이 아니라 기록입니다. 지금은 직접 입력해야 하고, 자동 수집은 항공권 API 키가 연결되면 붙습니다.
+        </p>
+        <form id="routeForm" autocomplete="off">
+          <div class="form-row">
+            <label><span>출발 공항</span><input id="routeFrom" type="text" maxlength="3" placeholder="ICN" required /></label>
+            <label><span>도착 공항</span><input id="routeTo" type="text" maxlength="3" placeholder="NRT" required /></label>
+            <label class="grow"><span>출발일</span><input id="routeDepart" type="date" required /></label>
+            <label class="grow"><span>귀국일 (선택)</span><input id="routeReturn" type="date" /></label>
+            <button type="submit">추가</button>
+          </div>
+        </form>
+        <div id="routeError" class="error-box" hidden></div>
+      </div>
+
+      <div id="routeList"></div>
+    </section>
+
   </main>
 
   <footer class="app-footer">

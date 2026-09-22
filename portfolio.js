@@ -61,6 +61,7 @@
       plans: [],
       alerts: [],
       items: [], // 면세점 관심 상품
+      routes: [], // 항공권 가격을 추적할 노선
       settings: JSON.parse(JSON.stringify(DEFAULT_SETTINGS)),
     };
   }
@@ -74,6 +75,10 @@
     if (!Array.isArray(s.plans)) s.plans = [];
     if (!Array.isArray(s.alerts)) s.alerts = [];
     if (!Array.isArray(s.items)) s.items = []; // 관심 상품 기능 이전 백업도 열리게
+    if (!Array.isArray(s.routes)) s.routes = []; // 항공권 기능 이전 백업도 열리게
+    s.routes.forEach(function (r) {
+      if (!Array.isArray(r.observations)) r.observations = [];
+    });
     if (!s.settings) s.settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
     if (!s.settings.sellSpreadPct) s.settings.sellSpreadPct = { USD: 1.75, JPY: 1.75 };
     if (!s.settings.preferentialPct) s.settings.preferentialPct = { USD: 0, JPY: 0 };
@@ -469,6 +474,115 @@
   }
 
   // ---------------------------------------------------------------------
+  // 항공권 가격 기록
+  // ---------------------------------------------------------------------
+  // 예측이 아니라 기록이다. 노선과 날짜를 등록해두고 값을 찍어 쌓으면
+  // "지금이 내가 본 가격 중 어디인지"가 나온다. 이건 틀릴 수가 없다.
+  //
+  // 자동 수집(Worker)이 붙기 전에도 손으로 적어 쓸 수 있어야 한다 —
+  // 그래야 데이터가 쌓이기 시작하고, 쌓인 뒤에야 패턴을 볼 수 있다.
+  // 관측 기록은 API와 무관한 모양이라 나중에 자동 수집을 붙여도 그대로 쓴다.
+
+  var IATA_RE = /^[A-Za-z]{3}$/;
+  var ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+  function addRoute(rec) {
+    var s = load();
+    var from = String(rec.from || "").trim().toUpperCase();
+    var to = String(rec.to || "").trim().toUpperCase();
+    if (!IATA_RE.test(from) || !IATA_RE.test(to)) {
+      throw new Error("공항 코드는 세 글자입니다. 예: ICN, NRT");
+    }
+    if (from === to) throw new Error("출발지와 도착지가 같습니다.");
+    var depart = String(rec.departDate || "").trim();
+    if (!ISO_DATE_RE.test(depart)) throw new Error("출발일을 넣어주세요.");
+    var back = String(rec.returnDate || "").trim();
+    if (back && !ISO_DATE_RE.test(back)) throw new Error("귀국일 형식이 올바르지 않습니다.");
+    if (back && back < depart) throw new Error("귀국일이 출발일보다 빠릅니다.");
+
+    s.routes.push({
+      id: uid(),
+      from: from,
+      to: to,
+      departDate: depart,
+      returnDate: back || null,
+      observations: [],
+    });
+    save();
+    return s.routes;
+  }
+
+  function removeRoute(id) {
+    var s = load();
+    s.routes = s.routes.filter(function (r) {
+      return r.id !== id;
+    });
+    save();
+    return s.routes;
+  }
+
+  // 하루에 한 점만 남긴다. 같은 날 다시 적으면 덮어쓴다 — 하루에 여러 번
+  // 찍어 넣으면 '관측 며칠째'가 부풀어 백분위가 거짓말을 한다.
+  function addObservation(routeId, krw, iso) {
+    var s = load();
+    var price = Number(krw);
+    if (!(price > 0)) throw new Error("가격은 0보다 커야 합니다.");
+    var date = ISO_DATE_RE.test(String(iso || "")) ? iso : FxData.todayISO();
+    var route = null;
+    s.routes.forEach(function (r) {
+      if (r.id === routeId) route = r;
+    });
+    if (!route) throw new Error("노선을 찾을 수 없습니다.");
+
+    var replaced = false;
+    route.observations.forEach(function (o) {
+      if (o.date === date) {
+        o.krw = price;
+        replaced = true;
+      }
+    });
+    if (!replaced) route.observations.push({ date: date, krw: price });
+    route.observations.sort(function (a, b) {
+      return a.date < b.date ? -1 : a.date > b.date ? 1 : 0;
+    });
+    save();
+    return route;
+  }
+
+  function listRoutes() {
+    return load().routes;
+  }
+
+  // 관측값만으로 내는 요약. 표본이 적으면 백분위는 의미가 없으므로
+  // count를 같이 내보내 화면에서 판단하게 한다.
+  function routeStats(route) {
+    var obs = (route && route.observations) || [];
+    if (!obs.length) return null;
+    var prices = obs.map(function (o) {
+      return o.krw;
+    });
+    var min = Math.min.apply(null, prices);
+    var max = Math.max.apply(null, prices);
+    var latest = obs[obs.length - 1];
+    var sum = prices.reduce(function (a, b) {
+      return a + b;
+    }, 0);
+    // 지금 값 이하였던 관측이 몇 퍼센트인지. 낮을수록 지금이 싼 편이다.
+    var below = prices.filter(function (p) {
+      return p <= latest.krw;
+    }).length;
+    return {
+      count: obs.length,
+      min: min,
+      max: max,
+      mean: sum / obs.length,
+      latest: latest,
+      percentile: (below / obs.length) * 100,
+      spread: max - min,
+    };
+  }
+
+  // ---------------------------------------------------------------------
   // 설정 / 내보내기 / 가져오기
   // ---------------------------------------------------------------------
 
@@ -570,6 +684,11 @@
     addItem: addItem,
     removeItem: removeItem,
     listItems: listItems,
+    addRoute: addRoute,
+    removeRoute: removeRoute,
+    addObservation: addObservation,
+    listRoutes: listRoutes,
+    routeStats: routeStats,
     getSettings: getSettings,
     setSpread: setSpread,
     setCostRates: setCostRates,

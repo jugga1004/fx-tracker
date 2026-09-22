@@ -125,6 +125,7 @@
     wireDutyFree();
     wireInstall();
     wireCost();
+    wireFlights();
 
     $("footerSource").textContent =
       "추이 차트: " +
@@ -235,6 +236,7 @@
     if (view === "overview") renderOverview();
     if (view === "cost") renderCost();
     if (view === "dutyfree") renderDutyFree();
+    if (view === "flights") renderFlights();
   }
 
   function renderAll() {
@@ -504,6 +506,140 @@
         '홈 화면에 추가하려면 아래 <strong>공유</strong> 버튼 → <strong>홈 화면에 추가</strong>를 누르세요.';
       box.hidden = false;
     }
+  }
+
+  // ---------------------------------------------------------------------
+  // 항공권 탭
+  // ---------------------------------------------------------------------
+  // 예측하지 않는다. 값을 찍어 쌓고 "내가 본 가격 중 지금이 어디인지"만 낸다.
+  // 항공권은 환율과 달리 패턴이 남을 여지가 있다 — 시장가가 아니라 항공사
+  // 수익관리 알고리즘이 매기는 값이고, 공매도가 없어 패턴이 지워지지 않는다.
+  // 그래도 그건 데이터가 쌓인 뒤에 확인할 일이지 지금 단정할 일이 아니다.
+
+  function wireFlights() {
+    $("routeDepart").value = FxData.shiftDays(FxData.todayISO(), 60);
+
+    $("routeForm").addEventListener("submit", function (e) {
+      e.preventDefault();
+      var box = $("routeError");
+      box.hidden = true;
+      try {
+        Portfolio.addRoute({
+          from: $("routeFrom").value,
+          to: $("routeTo").value,
+          departDate: $("routeDepart").value,
+          returnDate: $("routeReturn").value,
+        });
+        $("routeFrom").value = "";
+        $("routeTo").value = "";
+        $("routeReturn").value = "";
+        renderFlights();
+      } catch (err) {
+        box.textContent = err.message;
+        box.hidden = false;
+      }
+    });
+
+    // 노선 카드는 다시 그릴 때마다 새로 생기므로 컨테이너에 한 번만 건다.
+    $("routeList").addEventListener("click", function (e) {
+      var del = e.target.closest("button[data-route-del]");
+      if (del) {
+        if (!confirm("이 노선과 기록한 가격을 모두 지웁니다. 계속할까요?")) return;
+        Portfolio.removeRoute(del.dataset.routeDel);
+        renderFlights();
+        return;
+      }
+      var add = e.target.closest("button[data-route-add]");
+      if (!add) return;
+      var id = add.dataset.routeAdd;
+      var input = $("obs_" + id);
+      var box = $("routeError");
+      box.hidden = true;
+      try {
+        Portfolio.addObservation(id, input.value);
+        input.value = "";
+        renderFlights();
+      } catch (err) {
+        box.textContent = err.message;
+        box.hidden = false;
+      }
+    });
+  }
+
+  function routeTitle(r) {
+    var span = r.returnDate ? esc(r.departDate) + " ~ " + esc(r.returnDate) : esc(r.departDate) + " 편도";
+    return esc(r.from) + " → " + esc(r.to) + ' <span class="muted small">' + span + "</span>";
+  }
+
+  function renderFlights() {
+    var box = $("routeList");
+    if (!box) return;
+    var routes = Portfolio.listRoutes();
+    if (!routes.length) {
+      box.innerHTML = '<p class="muted small">등록한 노선이 없습니다. 위에 노선과 출발일을 넣어보세요.</p>';
+      return;
+    }
+
+    box.innerHTML = routes
+      .map(function (r) {
+        var st = Portfolio.routeStats(r);
+        var body;
+
+        if (!st) {
+          body = '<p class="muted small">아직 기록이 없습니다. 지금 본 가격을 넣어주세요.</p>';
+        } else {
+          // 관측이 몇 개 없으면 백분위는 숫자놀음이다. 그 사실을 숨기지 않는다.
+          var posText =
+            st.count < 5
+              ? "관측 " + st.count + "일 — 아직 위치를 말하기엔 이릅니다"
+              : "관측 " + st.count + "일 중 " + num(st.percentile, 0) + " 백분위";
+          body =
+            '<div class="stat-grid stat-grid--3">' +
+            stat("현재", won(st.latest.krw), st.latest.date.slice(5) + " 기록") +
+            stat("최저", won(st.min), null, "pos") +
+            stat("최고", won(st.max), null, "neg") +
+            "</div>" +
+            '<p class="muted small mt">' +
+            esc(posText) +
+            " · 최저 대비 " +
+            (st.latest.krw > st.min ? "+" + won(st.latest.krw - st.min) : "최저가") +
+            " · 폭 " +
+            won(st.spread) +
+            "</p>" +
+            '<div id="routeChart_' + esc(r.id) + '" class="chart-box"></div>';
+        }
+
+        return (
+          '<div class="card"><div class="card__head"><h2>' +
+          routeTitle(r) +
+          '</h2><button type="button" class="link-btn" data-route-del="' +
+          esc(r.id) +
+          '">삭제</button></div>' +
+          body +
+          '<div class="form-row mt">' +
+          '<label class="grow"><span>지금 본 가격 (원)</span><input id="obs_' +
+          esc(r.id) +
+          '" type="number" step="1000" min="0" placeholder="412000" /></label>' +
+          '<button type="button" data-route-add="' +
+          esc(r.id) +
+          '">기록</button></div></div>'
+        );
+      })
+      .join("");
+
+    // 차트는 innerHTML이 붙은 뒤에 그려야 한다.
+    routes.forEach(function (r) {
+      var st = Portfolio.routeStats(r);
+      if (!st || st.count < 2) return;
+      var el = $("routeChart_" + r.id);
+      if (!el) return;
+      Chart.line(el, {
+        rows: r.observations.map(function (o) {
+          return { date: o.date, rate: o.krw };
+        }),
+        height: 140,
+      });
+    });
   }
 
   // ---------------------------------------------------------------------
