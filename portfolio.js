@@ -31,6 +31,20 @@
     // 실시간 조회 Worker 주소. 비워두면 rates.json만 쓴다(= 예약 갱신에 의존).
     // rates.json이 오늘 자를 못 따라왔을 때만 호출한다. 인증키는 Worker Secret에만 있다.
     liveUrl: "",
+    // 해외 결제 수수료(%). 통화와 무관하게 카드 상품 조건으로 정해지므로
+    // 통화별로 나누지 않는다. 현찰 스프레드·우대율만 위에서 통화별로 잡는다.
+    costRates: {
+      ttSpreadPct: 1.0, // 카드 청구에 쓰이는 전신환매도율 스프레드
+      brandFeePct: 1.0, // 비자·마스터 등 국제브랜드 수수료
+      issuerFeePct: 0.25, // 카드사 해외서비스 수수료
+      travelFeePct: 0, // 트래블카드 환전 수수료. 무료 구간이면 0
+      dccMarkupPct: 5.0, // DCC 가산. 통상 3~8%
+    },
+    // 여행자 휴대품 면세한도(미화)와 초과분 추정에 쓸 간이세율(%).
+    // 세율은 품목마다 다르다 — 정확한 세액이 아니라 '한도를 넘으면 이득이
+    // 사라지는 지점'을 보여주려는 값이다. 관세청 확인이 필요하다.
+    dutyAllowanceUsd: 800,
+    dutySimpleTaxPct: 20,
   };
 
 
@@ -65,6 +79,20 @@
     if (!s.settings.preferentialPct) s.settings.preferentialPct = { USD: 0, JPY: 0 };
     if (typeof s.settings.ratesUrl !== "string") s.settings.ratesUrl = "";
     if (typeof s.settings.liveUrl !== "string") s.settings.liveUrl = "";
+    // 결제 수수료가 통째로 없던 시절의 백업도 열려야 한다. 있는 키는 그대로 두고
+    // 빠진 키만 기본값으로 채운다 — 사용자가 고쳐둔 값을 덮으면 안 된다.
+    if (!s.settings.costRates || typeof s.settings.costRates !== "object") s.settings.costRates = {};
+    Object.keys(DEFAULT_SETTINGS.costRates).forEach(function (k) {
+      if (!isFinite(Number(s.settings.costRates[k]))) s.settings.costRates[k] = DEFAULT_SETTINGS.costRates[k];
+    });
+    if (!isFinite(Number(s.settings.dutyAllowanceUsd))) s.settings.dutyAllowanceUsd = DEFAULT_SETTINGS.dutyAllowanceUsd;
+    if (!isFinite(Number(s.settings.dutySimpleTaxPct))) s.settings.dutySimpleTaxPct = DEFAULT_SETTINGS.dutySimpleTaxPct;
+    // 관심 상품에 현지가·국내가가 붙기 전 백업도 열려야 한다.
+    s.items.forEach(function (it) {
+      if (!isFinite(Number(it.localPrice))) it.localPrice = null;
+      if (it.localCcy !== "USD" && it.localCcy !== "JPY") it.localCcy = "JPY";
+      if (!isFinite(Number(it.domesticKrw))) it.domesticKrw = null;
+    });
     return s;
   }
 
@@ -409,11 +437,19 @@
     var url = String(rec.url || "").trim();
     // 링크는 화면에서 새 창으로 여는 데만 쓴다. javascript: 같은 스킴이 끼어들지 않게 막는다.
     if (url && !/^https?:\/\//i.test(url)) throw new Error("상품 링크는 http:// 또는 https:// 로 시작해야 합니다.");
+    // 현지가와 국내가는 선택 입력이다. 없으면 면세점가만 보여주고,
+    // 넣으면 세 값을 나란히 비교한다 — 면세점이 늘 싼 건 아니다.
+    var localPrice = Number(rec.localPrice);
+    var domesticKrw = Number(rec.domesticKrw);
+    var localCcy = rec.localCcy === "USD" ? "USD" : "JPY";
     s.items.push({
       id: uid(),
       name: String(rec.name || "").trim(),
       usd: usd,
       url: url,
+      localPrice: localPrice > 0 ? localPrice : null,
+      localCcy: localCcy,
+      domesticKrw: domesticKrw > 0 ? domesticKrw : null,
     });
     save();
     return s.items;
@@ -446,6 +482,38 @@
     if (isFinite(Number(prefPct))) s.settings.preferentialPct[code] = clamp(Number(prefPct), 0, 100);
     save();
     return s.settings;
+  }
+
+  // 넘긴 키만 고친다. 화면에서 한 칸씩 저장해도 나머지가 날아가지 않게.
+  function setCostRates(patch) {
+    var s = load();
+    Object.keys(DEFAULT_SETTINGS.costRates).forEach(function (k) {
+      if (patch && isFinite(Number(patch[k]))) s.settings.costRates[k] = Math.max(Number(patch[k]), 0);
+    });
+    save();
+    return s.settings.costRates;
+  }
+
+  function setDuty(allowanceUsd, simpleTaxPct) {
+    var s = load();
+    if (isFinite(Number(allowanceUsd))) s.settings.dutyAllowanceUsd = Math.max(Number(allowanceUsd), 0);
+    if (isFinite(Number(simpleTaxPct))) s.settings.dutySimpleTaxPct = Math.max(Number(simpleTaxPct), 0);
+    save();
+    return s.settings;
+  }
+
+  // Cost 모듈이 기대하는 형태로 설정을 옮겨 담는다. 현찰 조건만 통화별이고
+  // 나머지는 공통이라, 이 변환을 화면 코드에 흘리지 않고 여기서 끝낸다.
+  function costOptions(code) {
+    var s = load().settings;
+    var out = {
+      cashSpreadPct: s.sellSpreadPct[code],
+      prefPct: s.preferentialPct[code],
+    };
+    Object.keys(s.costRates).forEach(function (k) {
+      out[k] = s.costRates[k];
+    });
+    return out;
   }
 
   function setRatesUrl(url) {
@@ -504,6 +572,9 @@
     listItems: listItems,
     getSettings: getSettings,
     setSpread: setSpread,
+    setCostRates: setCostRates,
+    setDuty: setDuty,
+    costOptions: costOptions,
     setRatesUrl: setRatesUrl,
     setLiveUrl: setLiveUrl,
     exportJSON: exportJSON,

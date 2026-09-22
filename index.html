@@ -34,6 +34,7 @@
          그 아래에 탭이 있으면 탭 위치가 오르내려서 누르려던 자리를 놓친다. -->
     <div id="tabs" class="mode-tabs" role="tablist">
       <button type="button" class="mode-tab" data-view="overview" role="tab" aria-selected="true">현황</button>
+      <button type="button" class="mode-tab" data-view="cost" role="tab" aria-selected="false">결제비용</button>
       <button type="button" class="mode-tab" data-view="dutyfree" role="tab" aria-selected="false">면세점환율</button>
     </div>
 
@@ -71,6 +72,35 @@
 
 
     </section>
+    <!-- ============================ 결제비용 ============================ -->
+    <section id="view-cost" class="view" hidden>
+      <div class="card">
+        <div class="card__head">
+          <h2>결제 수단 비교</h2>
+          <div class="seg" id="costCcyToggle" role="group" aria-label="통화 선택"></div>
+        </div>
+        <p class="muted small">
+          같은 금액을 어떤 수단으로 치르느냐에 따라 실제로 나가는 원화가 다릅니다.
+          기준은 <strong>매매기준율</strong>이고 스프레드와 수수료가 전부 여기에 얹힙니다.
+        </p>
+        <form id="costForm" class="form-row" autocomplete="off">
+          <label class="grow"><span id="costAmountLabel">현지 금액</span>
+            <input id="costAmount" type="number" step="1" min="0" placeholder="100000" /></label>
+        </form>
+        <div id="costResult"></div>
+      </div>
+
+      <details class="card card--fold">
+        <summary>내 조건 · 수수료율</summary>
+        <p class="muted small">
+          카드사·상품·통화마다 다릅니다. 아래는 통상값이니 <strong>본인 약관에서 확인한 값으로 바꿔주세요.</strong>
+          현찰 스프레드와 우대율은 통화별로 따로 저장됩니다.
+        </p>
+        <div id="costRateForm" class="form-grid"></div>
+        <div id="costRateMsg" class="muted small mt"></div>
+      </details>
+    </section>
+
 
     <!-- ============================ 면세점 ============================ -->
     <section id="view-dutyfree" class="view" hidden>
@@ -135,6 +165,7 @@
   <script src="fx-data.js"></script>
   <script src="fx-stats.js"></script>
   <script src="portfolio.js"></script>
+  <script src="cost.js"></script>
   <script src="fx-domestic.js"></script>
   <script src="chart.js"></script>
   <script src="app.js"></script>

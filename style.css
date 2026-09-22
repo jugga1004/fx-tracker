@@ -384,6 +384,15 @@ code {
   -webkit-overflow-scrolling: touch;
 }
 
+/* 결제 수단 표에서 가장 싼 줄. 줄이 다섯이라 표시가 없으면 눈이 헤맨다. */
+.data-table tbody tr.row--best {
+  background: #e9f7ef;
+}
+
+.data-table tbody tr.row--best th {
+  font-weight: 700;
+}
+
 .data-table {
   width: 100%;
   border-collapse: collapse;

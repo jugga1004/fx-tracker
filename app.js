@@ -10,6 +10,8 @@
     series: {}, // code -> FxData.load 결과
     view: "overview",
     ccy: "USD",
+    costCcy: "JPY", // 결제비용 탭은 여행지 통화가 기본이라 엔으로 연다
+    costAmount: 100000,
     rangeDays: 0, // 0보다 크면 일 단위, 아니면 rangeMonths를 쓴다
     rangeMonths: 12,
     domesticError: null, // 국내 고시환율 연동 실패 메시지 (있으면 ECB로 폴백)
@@ -121,6 +123,7 @@
     wireBackup();
     wireDutyFree();
     wireInstall();
+    wireCost();
 
     $("footerSource").textContent =
       "추이 차트: " +
@@ -175,25 +178,26 @@
     });
   }
 
-  function buildCurrencySelectors() {
-    var codes = Object.keys(FxData.CURRENCIES);
+  // 통화 토글은 현황과 결제비용 두 곳이 같은 모양으로 쓴다.
+  function ccySegHtml(active) {
+    return Object.keys(FxData.CURRENCIES)
+      .map(function (c) {
+        var m = FxData.CURRENCIES[c];
+        return (
+          '<button type="button" data-ccy="' +
+          c +
+          '"' +
+          (c === active ? ' class="is-active"' : "") +
+          ">" +
+          esc(m.label) +
+          "</button>"
+        );
+      })
+      .join("");
+  }
 
-    function segHtml(active) {
-      return codes
-        .map(function (c) {
-          var m = FxData.CURRENCIES[c];
-          return (
-            '<button type="button" data-ccy="' +
-            c +
-            '"' +
-            (c === active ? ' class="is-active"' : "") +
-            ">" +
-            esc(m.label) +
-            "</button>"
-          );
-        })
-        .join("");
-    }
+  function buildCurrencySelectors() {
+    var segHtml = ccySegHtml;
 
     $("ccyToggle").innerHTML = segHtml(state.ccy);
     $("ccyToggle").addEventListener("click", function (e) {
@@ -228,6 +232,7 @@
     $("rateCards").hidden = hideRates;
     $("dataStatus").hidden = hideRates;
     if (view === "overview") renderOverview();
+    if (view === "cost") renderCost();
     if (view === "dutyfree") renderDutyFree();
   }
 
@@ -539,6 +544,143 @@
       reader.readAsText(file);
       e.target.value = "";
     });  }
+
+  // ---------------------------------------------------------------------
+  // 결제비용 탭
+  // ---------------------------------------------------------------------
+  // 은행 앱도 카드사 앱도 이 비교를 해주지 않는다. 어느 칸에서든 자기 상품이
+  // 불리하게 나오기 때문이다. 그래서 여기서는 전부 한 표에 늘어놓는다.
+
+  var COST_RATE_FIELDS = [
+    { key: "ttSpreadPct", label: "전신환 스프레드", hint: "카드 청구에 쓰이는 환율의 가산폭" },
+    { key: "brandFeePct", label: "국제브랜드 수수료", hint: "비자·마스터 등" },
+    { key: "issuerFeePct", label: "카드사 해외수수료", hint: "카드사가 따로 떼는 몫" },
+    { key: "travelFeePct", label: "트래블카드 수수료", hint: "무료 환전 구간이면 0" },
+    { key: "dccMarkupPct", label: "DCC 가산", hint: "현지에서 원화결제할 때. 통상 3~8%" }
+  ];
+
+  function costMeta() {
+    return FxData.CURRENCIES[state.costCcy];
+  }
+
+  function wireCost() {
+    $("costAmount").value = state.costAmount;
+
+    $("costCcyToggle").addEventListener("click", function (e) {
+      var btn = e.target.closest("button[data-ccy]");
+      if (!btn) return;
+      state.costCcy = btn.dataset.ccy;
+      // 통화를 바꾸면 자릿수가 통째로 달라진다(10만엔 vs 1000달러). 앞 통화의
+      // 금액을 그대로 두면 0이 두 개 붙은 표가 나오므로 기본값으로 되돌린다.
+      state.costAmount = state.costCcy === "JPY" ? 100000 : 1000;
+      $("costAmount").value = state.costAmount;
+      renderCost();
+    });
+
+    $("costAmount").addEventListener("input", function () {
+      state.costAmount = Number($("costAmount").value) || 0;
+      renderCost();
+    });
+
+    $("costForm").addEventListener("submit", function (e) {
+      e.preventDefault(); // 엔터로 새로고침되는 것만 막는다
+    });
+
+    $("costRateForm").addEventListener("change", function (e) {
+      var input = e.target.closest("input[data-rate]");
+      if (!input) return;
+      var key = input.dataset.rate;
+      if (key === "cashSpreadPct" || key === "prefPct") {
+        // 현찰 조건만 통화별로 저장된다. 두 칸을 함께 넘겨야 한쪽이 지워지지 않는다.
+        Portfolio.setSpread(state.costCcy, $("rate_cashSpreadPct").value, $("rate_prefPct").value);
+      } else {
+        var patch = {};
+        patch[key] = input.value;
+        Portfolio.setCostRates(patch);
+      }
+      $("costRateMsg").textContent = "저장했습니다.";
+      renderCost();
+      renderDfItems(); // 면세점 탭의 현지가 비교도 같은 요율을 쓴다
+    });
+  }
+
+  function renderCost() {
+    $("costCcyToggle").innerHTML = ccySegHtml(state.costCcy);
+    var meta = costMeta();
+    $("costAmountLabel").textContent = "현지 금액 (" + meta.amountLabel + ")";
+    renderCostRates();
+
+    var box = $("costResult");
+    var base = FxDomestic.latest(state.costCcy);
+    if (!base) {
+      box.innerHTML = '<p class="muted small">매매기준율을 아직 받지 못했습니다. 잠시 뒤 다시 확인해주세요.</p>';
+      return;
+    }
+    if (!(state.costAmount > 0)) {
+      box.innerHTML = '<p class="muted small">금액을 넣으면 수단별 실부담액을 계산합니다.</p>';
+      return;
+    }
+
+    // 면세점 적용환율은 오늘 고시가 아니라 전일 고시다. 오늘 값과 다르기 때문에
+    // 면세점이 늘 최저인 것도 아니다 — 그 역전을 표에서 그대로 보여준다.
+    var applied = FxDomestic.appliedOn(state.costCcy, FxData.todayISO());
+    var res = Cost.compare(
+      state.costAmount,
+      base.rate,
+      applied ? applied.rate : NaN,
+      meta.unit,
+      Portfolio.costOptions(state.costCcy)
+    );
+
+    var rows = res.rows
+      .map(function (r) {
+        return (
+          "<tr" + (r.isBest ? ' class="row--best"' : "") + ">" +
+          "<th>" + esc(r.label) + (r.isBest ? ' <span class="badge">최저</span>' : "") +
+          '<br /><span class="muted small">' + esc(r.note) + "</span></th>" +
+          "<td>" + rate(r.rate) + "원</td>" +
+          "<td><strong>" + won(r.krw) + "</strong></td>" +
+          '<td class="' + (r.vsBestKrw > 0 ? "neg" : "pos") + '">' +
+          (r.vsBestKrw > 0 ? "+" + won(r.vsBestKrw) : "—") +
+          "</td></tr>"
+        );
+      })
+      .join("");
+
+    var worst = res.rows[res.rows.length - 1];
+    var gap = worst.krw - res.rows[0].krw;
+
+    box.innerHTML =
+      '<div class="table-scroll"><table class="data-table">' +
+      "<thead><tr><th>수단</th><th>실효환율</th><th>실부담액</th><th>최저 대비</th></tr></thead>" +
+      "<tbody>" + rows + "</tbody></table></div>" +
+      '<p class="muted small mt">환율은 ' + esc(meta.unitLabel) + " 기준 · 매매기준율 그대로면 " +
+      won(res.baseKrw) + " · 오늘 고시 " + rate(base.rate) + " (" + esc(base.date.slice(5)) + ")</p>" +
+      '<div class="note note--warn mt"><strong>가장 싼 수단과 가장 비싼 수단의 차이가 ' +
+      won(gap) + "입니다.</strong> 같은 금액을 쓰는데 " + esc(worst.label) +
+      " 쪽을 고르면 그만큼 더 냅니다. 요율은 카드사·상품마다 다르니 본인 약관 확인이 필요합니다.</div>";
+  }
+
+  function renderCostRates() {
+    var st = Portfolio.getSettings();
+    var meta = costMeta();
+
+    function row(key, label, hint, value) {
+      return (
+        "<label>" + esc(label) +
+        '<input id="rate_' + key + '" data-rate="' + key +
+        '" type="number" step="0.01" min="0" value="' + value + '" />' +
+        '<span class="muted small">' + esc(hint) + "</span></label>"
+      );
+    }
+
+    $("costRateForm").innerHTML =
+      row("cashSpreadPct", "현찰 스프레드 (%)", meta.label + " 기준", st.sellSpreadPct[state.costCcy]) +
+      row("prefPct", "환전 우대율 (%)", meta.label + " 기준", st.preferentialPct[state.costCcy]) +
+      COST_RATE_FIELDS.map(function (f) {
+        return row(f.key, f.label + " (%)", f.hint, st.costRates[f.key]);
+      }).join("");
+  }
 
   // ---------------------------------------------------------------------
   // 면세점 탭

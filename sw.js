@@ -6,7 +6,7 @@
 //
 // 참고: 서비스워커는 https 또는 localhost에서만 등록된다. index.html을 file://로 열면
 // 등록이 안 되지만, app.js가 그 경우를 건너뛰도록 처리해두어서 앱 자체는 정상 동작한다.
-var CACHE_NAME = "fx-tracker-v6";
+var CACHE_NAME = "fx-tracker-v7";
 var APP_SHELL = [
   "./",
   "./index.html",
@@ -15,6 +15,7 @@ var APP_SHELL = [
   "./fx-data.js",
   "./fx-stats.js",
   "./portfolio.js",
+  "./cost.js",
   "./fx-domestic.js",
   "./chart.js",
   "./manifest.json",
