@@ -64,7 +64,7 @@ export default {
             service: "fx-tracker 실시간 고시환율",
             keyConfigured: Boolean(env.KOREAEXIM_KEY),
             source: "한국수출입은행 오픈API (매매기준율)",
-            rev: "smbs-probe-1",
+            rev: "smbs-probe-2",
           },
           200,
           origin
@@ -451,10 +451,16 @@ function json(body, status, origin) {
 //
 // 주소는 하드코딩한다. 바깥에서 받은 주소를 그대로 fetch하면 이 Worker가
 // 열린 프록시가 되어 남의 서버를 찌르는 데 쓰인다.
+// https는 526(인증서 검증 실패)이 났다. 체인이 불완전한 사이트에서 흔하다.
+// Workers는 인증서 검증을 끌 수 없으므로 http와 다른 호스트명을 같이 시도한다.
 const SMBS_PAGES = {
   today: "https://www.smbs.biz/ExRate/TodayExRate.jsp",
-  todayPop: "https://www.smbs.biz/ExRate/TodayExRate_p.jsp",
-  std: "https://www.smbs.biz/ExRate/StdExRate.jsp",
+  todayHttp: "http://www.smbs.biz/ExRate/TodayExRate.jsp",
+  todayPopHttp: "http://www.smbs.biz/ExRate/TodayExRate_p.jsp",
+  bareHttp: "http://smbs.biz/ExRate/TodayExRate.jsp",
+  bareHttps: "https://smbs.biz/ExRate/TodayExRate.jsp",
+  stdHttp: "http://www.smbs.biz/ExRate/StdExRate.jsp",
+  rootHttp: "http://www.smbs.biz/",
 };
 
 async function probeSmbs(which) {
