@@ -898,15 +898,10 @@
           name: $("dfItemName").value,
           usd: $("dfItemUsd").value,
           url: $("dfItemUrl").value,
-          localPrice: $("dfItemLocal").value,
-          localCcy: $("dfItemLocalCcy").value,
-          domesticKrw: $("dfItemDomestic").value,
         });
         $("dfItemName").value = "";
         $("dfItemUsd").value = "";
         $("dfItemUrl").value = "";
-        $("dfItemLocal").value = "";
-        $("dfItemDomestic").value = "";
         updateDfItemPreview();
         renderDutyFree(); // 합계·비교표·면세한도까지 한꺼번에 바뀐다
       } catch (err) {

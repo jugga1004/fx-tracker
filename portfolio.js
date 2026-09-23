@@ -92,11 +92,9 @@
     });
     if (!isFinite(Number(s.settings.dutyAllowanceUsd))) s.settings.dutyAllowanceUsd = DEFAULT_SETTINGS.dutyAllowanceUsd;
     if (!isFinite(Number(s.settings.dutySimpleTaxPct))) s.settings.dutySimpleTaxPct = DEFAULT_SETTINGS.dutySimpleTaxPct;
-    // 관심 상품에 현지가·국내가가 붙기 전 백업도 열려야 한다.
+    // 손으로 적던 현지가·국내가는 걷어냈다. 예전 데이터에 남아 있어도 무시한다.
     s.items.forEach(function (it) {
-      if (!isFinite(Number(it.localPrice))) it.localPrice = null;
-      if (it.localCcy !== "USD" && it.localCcy !== "JPY") it.localCcy = "JPY";
-      if (!isFinite(Number(it.domesticKrw))) it.domesticKrw = null;
+      if (!it.shop || typeof it.shop !== "object") it.shop = null;
     });
     return s;
   }
@@ -469,25 +467,30 @@
     var url = String(rec.url || "").trim();
     // 링크는 화면에서 새 창으로 여는 데만 쓴다. javascript: 같은 스킴이 끼어들지 않게 막는다.
     if (url && !/^https?:\/\//i.test(url)) throw new Error("상품 링크는 http:// 또는 https:// 로 시작해야 합니다.");
-    // 현지가와 국내가는 선택 입력이다. 없으면 면세점가만 보여주고,
-    // 넣으면 세 값을 나란히 비교한다 — 면세점이 늘 싼 건 아니다.
-    var localPrice = Number(rec.localPrice);
-    var domesticKrw = Number(rec.domesticKrw);
-    var localCcy = rec.localCcy === "USD" ? "USD" : "JPY";
     s.items.push({
       id: uid(),
       name: String(rec.name || "").trim(),
       usd: usd,
       url: url,
-      localPrice: localPrice > 0 ? localPrice : null,
-      localCcy: localCcy,
-      domesticKrw: domesticKrw > 0 ? domesticKrw : null,
+      shop: null, // 쇼핑 최저가 조회 결과. 조회하면 채워진다.
+    });
+    save();
+    return s.items;
+  }
+
+  // 쇼핑 최저가 조회 결과를 상품에 붙인다. 공유 저장소로 같이 퍼져서
+  // 다른 사람도 같은 비교를 보게 된다.
+  function setItemShop(id, payload) {
+    var s = load();
+    s.items.forEach(function (it) {
+      if (it.id === id) it.shop = payload || null;
     });
     save();
     return s.items;
   }
 
   function removeItem(id) {
+
     var s = load();
     s.items = s.items.filter(function (it) {
       return it.id !== id;
@@ -713,6 +716,7 @@
     addItem: addItem,
     removeItem: removeItem,
     listItems: listItems,
+    setItemShop: setItemShop,
     addRoute: addRoute,
     removeRoute: removeRoute,
     addObservation: addObservation,

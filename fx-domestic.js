@@ -323,6 +323,18 @@
     });
   }
 
+  // 상품명으로 국내 쇼핑몰 최저가를 찾는다. 면세점이 늘 싼 게 아니라서
+  // 같은 물건이 국내에 더 싸게 있는지 확인할 수 있어야 한다.
+  function fetchShop(query) {
+    if (!liveEnabled()) throw new Error("조회 Worker가 연결돼 있어야 최저가를 찾을 수 있습니다.");
+    var q = String(query || "").trim();
+    if (!q) throw new Error("검색할 상품명이 없습니다.");
+    return fetchJson(liveUrl() + "/v1/shop?q=" + encodeURIComponent(q)).then(function (body) {
+      if (!body || body.ok === false) throw new Error((body && body.error) || "최저가를 가져오지 못했습니다.");
+      return body;
+    });
+  }
+
   // 주소를 바꿀 때만 쓰는 검증용. 이쪽은 실패를 그대로 던진다.
   function check(url) {
     var clean = String(url || "").trim();
@@ -445,6 +457,7 @@
     checkLive: checkLive,
     forceLive: forceLive,
     fetchProduct: fetchProduct,
+    fetchShop: fetchShop,
     liveRate: liveRate,
     refreshLiveRates: refreshLiveRates,
     liveRatesSource: liveRatesSource,
