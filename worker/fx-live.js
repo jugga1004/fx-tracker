@@ -64,7 +64,7 @@ export default {
             service: "fx-tracker 실시간 고시환율",
             keyConfigured: Boolean(env.KOREAEXIM_KEY),
             source: "한국수출입은행 오픈API (매매기준율)",
-            rev: "smbs-probe-5",
+            rev: "smbs-probe-6",
           },
           200,
           origin
@@ -131,7 +131,8 @@ export default {
 
       if (path === "/v1/smbs") {
         const which = new URL(request.url).searchParams.get("page") || "today";
-        return json(await probeSmbs(which), 200, origin);
+        const body = new URL(request.url).searchParams.get("body") || "";
+        return json(await probeSmbs(which, body), 200, origin);
       }
 
       return json({ ok: false, error: "없는 경로입니다. /v1/recent, /v1/product, /v1/health 를 쓰세요." }, 404, origin);
@@ -449,39 +450,43 @@ function json(body, status, origin) {
 // 2026-09-23 09:36 실측: 서울외국환중개 값(1,360.0)은 이미 나와 있었는데
 // 수출입은행은 missing이었다.
 //
+// https는 526(인증서 검증 실패)이 난다. 체인이 불완전한 모양이고 Workers는
+// 검증을 끌 수 없어서 http로 간다.
+//
 // 주소는 하드코딩한다. 바깥에서 받은 주소를 그대로 fetch하면 이 Worker가
 // 열린 프록시가 되어 남의 서버를 찌르는 데 쓰인다.
-// https는 526(인증서 검증 실패)이 났다. 체인이 불완전한 사이트에서 흔하다.
-// Workers는 인증서 검증을 끌 수 없으므로 http와 다른 호스트명을 같이 시도한다.
 const SMBS_PAGES = {
-  today: "https://www.smbs.biz/ExRate/TodayExRate.jsp",
-  todayHttp: "http://www.smbs.biz/ExRate/TodayExRate.jsp",
-  todayPopHttp: "http://www.smbs.biz/ExRate/TodayExRate_p.jsp",
-  bareHttp: "http://smbs.biz/ExRate/TodayExRate.jsp",
-  bareHttps: "https://smbs.biz/ExRate/TodayExRate.jsp",
-  stdHttp: "http://www.smbs.biz/ExRate/StdExRate.jsp",
-  rootHttp: "http://www.smbs.biz/",
-  flash: "http://www.smbs.biz/Flash/TodayExRate_flash.jsp",
+  today: "http://www.smbs.biz/ExRate/TodayExRate.jsp",
+  std: "http://www.smbs.biz/ExRate/StdExRate.jsp",
   dayDol: "http://www.smbs.biz/ExRate/DayDolWonExRate.jsp",
   raise: "http://www.smbs.biz/ExRate/RaiseExRate.jsp",
+  flash: "http://www.smbs.biz/Flash/TodayExRate_flash.jsp",
+  root: "http://www.smbs.biz/",
 };
 
-async function probeSmbs(which) {
+async function probeSmbs(which, body) {
   const url = SMBS_PAGES[which] || SMBS_PAGES.today;
   try {
-    const res = await fetch(url, {
+    const init = {
+      method: body ? "POST" : "GET",
       headers: {
         // 기본 UA로 가면 막는 사이트가 있다.
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
         "Accept-Language": "ko-KR,ko;q=0.9",
+        Referer: "http://www.smbs.biz/ExRate/TodayExRate.jsp",
       },
-      cf: { cacheTtl: 60, cacheEverything: true },
-    });
+    };
+    if (body) {
+      init.headers["Content-Type"] = "application/x-www-form-urlencoded";
+      init.body = body;
+    }
+
+    const res = await fetch(url, init);
     const text = await res.text();
-    // 숫자가 HTML에 실려 오는지가 관건이다. 1,3xx.x / 8xx.xx 패턴을 세어 본다.
-    // 쉼표 없는 1360.00 형태도 잡도록 넓힌다. 앞 정규식은 이걸 놓쳤다.
+
+    // 쉼표 없는 1360.00 형태도 잡도록 넓게 본다. 처음 정규식은 이걸 놓쳤다.
     const nums = text.match(/[0-9]{1,3}(?:,[0-9]{3})*\.[0-9]{1,4}/g) || [];
-    // 태그를 걷어낸 본문. 표가 서버에서 그려지는지 눈으로 확인하려면 이게 있어야 한다.
     const stripped = text
       .replace(/<script[\s\S]*?<\/script>/gi, " ")
       .replace(/<style[\s\S]*?<\/style>/gi, " ")
@@ -489,30 +494,22 @@ async function probeSmbs(which) {
       .replace(/&nbsp;/g, " ")
       .replace(/\s+/g, " ")
       .trim();
-    const tableCount = (text.match(/<table/gi) || []).length;
-    const rowCount = (text.match(/<tr/gi) || []).length;
-    // 숫자가 HTML에 없으면 JS가 따로 불러온다는 뜻이다. 그 엔드포인트를 찾는다.
-    const endpoints = [...new Set((text.match(/["'][^"']*\.(?:jsp|do|json|asp|php)(?:\?[^"']*)?["']/gi) || [])
-      .map((x) => x.slice(1, -1)))].slice(0, 40);
-    const ajaxUrls = [...new Set((text.match(/url\s*:\s*["'][^"']+["']/gi) || []).map((x) => x.slice(0, 160)))].slice(0, 20);
-    const forms = [...new Set((text.match(/<form[^>]*>/gi) || []).map((x) => x.slice(0, 200)))].slice(0, 10);
+
     return {
       ok: res.ok,
       url,
+      method: init.method,
       status: res.status,
-      contentType: res.headers.get("content-type"),
       bytes: text.length,
-      numbersFound: nums.slice(0, 20),
       numberCount: nums.length,
-      hasScript: /<script/i.test(text),
-      endpoints,
-      ajaxUrls,
-      forms,
-      tableCount,
-      rowCount,
+      numbersFound: nums.slice(0, 24),
+      inputs: [...new Set((text.match(/<(?:input|select)[^>]*>/gi) || []).map((x) => x.slice(0, 160)))].slice(0, 25),
+      forms: [...new Set((text.match(/<form[^>]*>/gi) || []).map((x) => x.slice(0, 200)))].slice(0, 6),
+      ajaxUrls: [...new Set((text.match(/url\s*:\s*["'][^"']+["']/gi) || []).map((x) => x.slice(0, 160)))].slice(0, 12),
+      tableCount: (text.match(/<table/gi) || []).length,
+      rowCount: (text.match(/<tr/gi) || []).length,
       strippedLen: stripped.length,
-      stripped: stripped.slice(0, 1800),
-      head: text.slice(0, 1200),
+      stripped: stripped.slice(0, 1500),
     };
   } catch (err) {
     return { ok: false, url, error: String(err && err.message ? err.message : err) };
