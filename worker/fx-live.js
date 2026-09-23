@@ -64,7 +64,7 @@ export default {
             service: "fx-tracker 실시간 고시환율",
             keyConfigured: Boolean(env.KOREAEXIM_KEY),
             source: "한국수출입은행 오픈API (매매기준율)",
-            rev: "smbs-probe-2",
+            rev: "smbs-probe-3",
           },
           200,
           origin
@@ -477,6 +477,11 @@ async function probeSmbs(which) {
     const text = await res.text();
     // 숫자가 HTML에 실려 오는지가 관건이다. 1,3xx.x / 8xx.xx 패턴을 세어 본다.
     const nums = text.match(/\b[0-9]{1,2},[0-9]{3}\.[0-9]{1,2}\b|\b[0-9]{3}\.[0-9]{2}\b/g) || [];
+    // 숫자가 HTML에 없으면 JS가 따로 불러온다는 뜻이다. 그 엔드포인트를 찾는다.
+    const endpoints = [...new Set((text.match(/["'][^"']*\.(?:jsp|do|json|asp|php)(?:\?[^"']*)?["']/gi) || [])
+      .map((x) => x.slice(1, -1)))].slice(0, 40);
+    const ajaxUrls = [...new Set((text.match(/url\s*:\s*["'][^"']+["']/gi) || []).map((x) => x.slice(0, 160)))].slice(0, 20);
+    const forms = [...new Set((text.match(/<form[^>]*>/gi) || []).map((x) => x.slice(0, 200)))].slice(0, 10);
     return {
       ok: res.ok,
       url,
@@ -486,6 +491,9 @@ async function probeSmbs(which) {
       numbersFound: nums.slice(0, 20),
       numberCount: nums.length,
       hasScript: /<script/i.test(text),
+      endpoints,
+      ajaxUrls,
+      forms,
       head: text.slice(0, 1200),
     };
   } catch (err) {
