@@ -63,8 +63,8 @@ export default {
             ok: true,
             service: "fx-tracker 실시간 고시환율",
             keyConfigured: Boolean(env.KOREAEXIM_KEY),
-            source: "한국수출입은행 오픈API (매매기준율)",
-            rev: "smbs-probe-6",
+            source: "한국수출입은행 오픈API (매매기준율) + 서울외국환중개 당일 직독",
+            rev: "smbs-fast-1",
           },
           200,
           origin
@@ -102,6 +102,18 @@ export default {
           else missing.push(targets[i]);
         });
 
+        // 수출입은행이 오늘 자를 아직 안 내놨으면 서울외국환중개에서 직접 받는다.
+        // 고시는 9시 이전에 나는데 중계는 10시가 넘어야 온다(2026-09-23 실측 34분 차).
+        // 면세점 '내일 적용환율'이 그 시간만큼 늦게 뜨는 걸 막는 게 목적이다.
+        if (!rates[today] && !isWeekend(today)) {
+          const fast = await fetchSmbs(today);
+          if (fast) {
+            rates[today] = fast;
+            const at = missing.indexOf(today);
+            if (at >= 0) missing.splice(at, 1);
+          }
+        }
+
         const found = Object.keys(rates).sort();
         return json(
           {
@@ -130,9 +142,8 @@ export default {
       }
 
       if (path === "/v1/smbs") {
-        const which = new URL(request.url).searchParams.get("page") || "today";
-        const body = new URL(request.url).searchParams.get("body") || "";
-        return json(await probeSmbs(which, body), 200, origin);
+        const iso = new URL(request.url).searchParams.get("date") || kstToday();
+        return json(await probeSmbs(iso), 200, origin);
       }
 
       return json({ ok: false, error: "없는 경로입니다. /v1/recent, /v1/product, /v1/health 를 쓰세요." }, 404, origin);
@@ -444,73 +455,76 @@ function json(body, status, origin) {
 }
 
 // ---------------------------------------------------------------------------
-// 서울외국환중개 직독 (조사용)
+// 서울외국환중개 — 당일 매매기준율 (빠른 경로)
 // ---------------------------------------------------------------------------
-// 매매기준율을 실제로 고시하는 곳은 여기다. 수출입은행은 중계일 뿐이고 늦는다.
-// 2026-09-23 09:36 실측: 서울외국환중개 값(1,360.0)은 이미 나와 있었는데
-// 수출입은행은 missing이었다.
+// 매매기준율을 실제로 고시하는 곳은 여기다. 수출입은행 오픈API는 중계일 뿐이고
+// 늦는다. 2026-09-23 실측: 서울외국환중개는 09:36 이전에 이미 1,360.00이었고
+// 수출입은행은 10:10:17에야 같은 값을 내놨다 — 34분 차이.
 //
-// https는 526(인증서 검증 실패)이 난다. 체인이 불완전한 모양이고 Workers는
-// 검증을 끌 수 없어서 http로 간다.
+// 면세점 적용환율은 전일 고시분이라, 오늘 고시가 늦게 들어오면 "내일 적용환율"이
+// 그만큼 늦게 뜬다. 그 34분이 이 경로를 붙이는 이유다.
 //
-// 주소는 하드코딩한다. 바깥에서 받은 주소를 그대로 fetch하면 이 Worker가
-// 열린 프록시가 되어 남의 서버를 찌르는 데 쓰인다.
-const SMBS_PAGES = {
-  today: "http://www.smbs.biz/ExRate/TodayExRate.jsp",
-  std: "http://www.smbs.biz/ExRate/StdExRate.jsp",
-  dayDol: "http://www.smbs.biz/ExRate/DayDolWonExRate.jsp",
-  raise: "http://www.smbs.biz/ExRate/RaiseExRate.jsp",
-  flash: "http://www.smbs.biz/Flash/TodayExRate_flash.jsp",
-  root: "http://www.smbs.biz/",
-};
+// 이 주소는 브라우저 개발자도구로 찾았다. 페이지(TodayExRate.jsp)에는 표가 없고
+// 값은 이 엔드포인트가 따로 내려준다. tr_date를 안 붙이면 오류 페이지가 온다.
+//
+// 응답이 쿼리스트링 모양이라 파싱이 간단하다:
+//   ?test0=test&updown=0&USD=1,360.00&...&JPY=863.68&...&loading=ok&
+//
+// https는 526(인증서 검증 실패)이 난다. 체인이 불완전하고 Workers는 검증을
+// 끌 수 없어서 http로 간다. 공개된 고시 환율이라 비밀이 오가지 않는다.
+const SMBS_FLASH = "http://www.smbs.biz/Flash/TodayExRate_flash.jsp?tr_date=";
+const SMBS_TTL = 60 * 10; // 하루 한 번 고시라 오래 잡아도 되지만, 고시 전 빈 응답을 오래 물지 않게
 
-async function probeSmbs(which, body) {
-  const url = SMBS_PAGES[which] || SMBS_PAGES.today;
+function smbsNum(raw) {
+  if (!raw) return null;
+  const n = Number(String(raw).replace(/,/g, "").trim());
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+// 성공하면 { USD, JPY }, 아니면 null. 실패는 조용히 삼킨다 —
+// 이건 어디까지나 빠른 경로고, 없으면 수출입은행이 받쳐준다.
+async function fetchSmbs(iso) {
   try {
-    const init = {
-      method: body ? "POST" : "GET",
+    const res = await fetch(SMBS_FLASH + iso, {
       headers: {
-        // 기본 UA로 가면 막는 사이트가 있다.
+        // 기본 UA로는 막는 경우가 있다.
         "User-Agent":
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
-        "Accept-Language": "ko-KR,ko;q=0.9",
         Referer: "http://www.smbs.biz/ExRate/TodayExRate.jsp",
       },
-    };
-    if (body) {
-      init.headers["Content-Type"] = "application/x-www-form-urlencoded";
-      init.body = body;
-    }
-
-    const res = await fetch(url, init);
+      cf: { cacheTtl: SMBS_TTL, cacheEverything: true },
+    });
+    if (!res.ok) return null;
     const text = await res.text();
+    // 아직 고시 전이면 loading=ok가 안 붙거나 값이 비어서 온다.
+    if (!/loading=ok/.test(text)) return null;
+    const q = text.slice(text.indexOf("?") + 1);
+    const params = new URLSearchParams(q);
+    const USD = smbsNum(params.get("USD"));
+    const JPY = smbsNum(params.get("JPY")); // 이미 100엔 기준이라 그대로 쓴다
+    if (!USD && !JPY) return null;
+    const row = {};
+    if (USD) row.USD = USD;
+    if (JPY) row.JPY = JPY;
+    return row;
+  } catch {
+    return null;
+  }
+}
 
-    // 쉼표 없는 1360.00 형태도 잡도록 넓게 본다. 처음 정규식은 이걸 놓쳤다.
-    const nums = text.match(/[0-9]{1,3}(?:,[0-9]{3})*\.[0-9]{1,4}/g) || [];
-    const stripped = text
-      .replace(/<script[\s\S]*?<\/script>/gi, " ")
-      .replace(/<style[\s\S]*?<\/style>/gi, " ")
-      .replace(/<[^>]+>/g, " ")
-      .replace(/&nbsp;/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-
-    return {
-      ok: res.ok,
-      url,
-      method: init.method,
-      status: res.status,
-      bytes: text.length,
-      numberCount: nums.length,
-      numbersFound: nums.slice(0, 24),
-      inputs: [...new Set((text.match(/<(?:input|select)[^>]*>/gi) || []).map((x) => x.slice(0, 160)))].slice(0, 25),
-      forms: [...new Set((text.match(/<form[^>]*>/gi) || []).map((x) => x.slice(0, 200)))].slice(0, 6),
-      ajaxUrls: [...new Set((text.match(/url\s*:\s*["'][^"']+["']/gi) || []).map((x) => x.slice(0, 160)))].slice(0, 12),
-      tableCount: (text.match(/<table/gi) || []).length,
-      rowCount: (text.match(/<tr/gi) || []).length,
-      strippedLen: stripped.length,
-      stripped: stripped.slice(0, 1500),
-    };
+// 조사용으로 남겨둔다. 파싱이 깨졌을 때 원문을 봐야 고칠 수 있다.
+async function probeSmbs(iso) {
+  const url = SMBS_FLASH + iso;
+  try {
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
+        Referer: "http://www.smbs.biz/ExRate/TodayExRate.jsp",
+      },
+    });
+    const text = await res.text();
+    return { ok: res.ok, url, status: res.status, bytes: text.length, parsed: await fetchSmbs(iso), raw: text.slice(0, 300) };
   } catch (err) {
     return { ok: false, url, error: String(err && err.message ? err.message : err) };
   }
