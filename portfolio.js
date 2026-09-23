@@ -112,13 +112,40 @@
     return state;
   }
 
-  function save() {
+  // 저장은 여기 한 곳으로 모인다. 공유 저장소(Sync)는 이 지점만 구독하면
+  // 어떤 기능이 값을 바꿨든 놓치지 않는다.
+  var changeHandlers = [];
+
+  function onChange(fn) {
+    if (typeof fn === "function") changeHandlers.push(fn);
+  }
+
+  // quiet=true면 알리지 않는다. 공유 저장소에서 받아온 내용을 반영할 때 쓴다 —
+  // 안 그러면 받은 걸 그대로 다시 올리는 되먹임이 생긴다.
+  function save(quiet) {
+    var ok = true;
     try {
       localStorage.setItem(STORE_KEY, JSON.stringify(load()));
-      return true;
     } catch (err) {
-      return false;
+      ok = false; // 용량 초과·사생활 모드 등. 메모리로는 계속 돈다.
     }
+    if (!quiet) {
+      changeHandlers.forEach(function (fn) {
+        try {
+          fn();
+        } catch (err) {
+          /* 구독자 하나가 터져도 저장은 성공한 것이다 */
+        }
+      });
+    }
+    return ok;
+  }
+
+  // 공유 저장소에서 받아온 상태를 그대로 앉힌다. 되먹임을 막으려 조용히 저장한다.
+  function adoptShared(obj) {
+    state = normalize(obj);
+    save(true);
+    return state;
   }
 
   // ---------------------------------------------------------------------
@@ -667,6 +694,8 @@
   global.Portfolio = {
     load: load,
     save: save,
+    onChange: onChange,
+    adoptShared: adoptShared,
     addBuy: addBuy,
     removeBuy: removeBuy,
     buysFor: buysFor,

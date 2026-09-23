@@ -163,6 +163,7 @@
 
     registerServiceWorker();
     startPendingPoll();
+    wireSync();
   }
 
   // 오늘 고시가 아직 안 들어온 날에는 페이지를 열어둔 채로도 값이 알아서 붙게 한다.
@@ -173,6 +174,46 @@
   // 타이머는 한 번 걸고 안 지운다. 조건 검사 자체는 localStorage 읽기 한 번이라
   // 사실상 공짜고, 지워두면 날짜가 바뀐 뒤 다시 걸 사람이 없다.
   var PENDING_POLL_MS = 10 * 60 * 1000;
+
+  // ---------------------------------------------------------------------
+  // 공유 상태
+  // ---------------------------------------------------------------------
+  // 테스트 단계에서는 여럿이 같은 내용을 보고 기획해야 해서, 브라우저마다
+  // 따로 놀던 저장소를 Worker의 공유 저장소로 묶는다. localStorage는 오프라인
+  // 캐시로 남으므로 공유 저장소가 죽어도 앱은 그대로 돈다.
+  function wireSync() {
+    if (!global_Sync()) return;
+
+    Sync.onStatus(function (st) {
+      var box = $("syncStatus");
+      if (!box) return;
+      if (st.state === "unbound") {
+        // 아직 KV를 안 붙인 상태. 이 브라우저에만 저장된다는 걸 숨기지 않는다.
+        box.innerHTML = '<span class="badge badge--warn">이 브라우저에만 저장됨</span> 공유 저장소 미연결';
+        box.hidden = false;
+        return;
+      }
+      if (st.state === "offline" || st.state === "error") {
+        box.innerHTML = '<span class="badge badge--warn">동기화 실패</span> 잠시 뒤 다시 시도합니다';
+        box.hidden = false;
+        return;
+      }
+      box.innerHTML =
+        '<span class="badge">공유 중</span> 모두가 같은 내용을 봅니다' +
+        (st.updatedAt ? ' <span class="muted">· 마지막 저장 ' + esc(hhmmLocal(st.updatedAt)) + "</span>" : "");
+      box.hidden = false;
+    });
+
+    Sync.start(function () {
+      // 원격에서 바뀐 내용이 들어왔다. 화면을 통째로 다시 그린다.
+      renderHeader();
+      setView(state.view);
+    });
+  }
+
+  function global_Sync() {
+    return typeof Sync !== "undefined" && Sync && typeof Sync.start === "function";
+  }
 
   function startPendingPoll() {
     setInterval(function () {
