@@ -300,11 +300,7 @@
           sub = "시장환율" + (live.at ? " " + hhmmLocal(live.at) : "") + " 기준";
           if (dom.length) {
             sub +=
-              '<br /><span class="muted">오늘 고시 ' +
-              rate(dom[dom.length - 1].rate) +
-              " (" +
-              dom[dom.length - 1].date.slice(5) +
-              ")</span>";
+              '<br /><span class="muted">오늘 고시 ' + rate(dom[dom.length - 1].rate) + "</span>";
           }
         } else if (dom.length) {
           // 국내 매매기준율이 있으면 그쪽을 대표값으로 쓴다. 전일 대비도
@@ -315,9 +311,8 @@
             var prev = dom[dom.length - 2];
             delta = { abs: primary.rate - prev.rate, pct: ((primary.rate - prev.rate) / prev.rate) * 100 };
           }
-          // 어느 날짜 고시인지 값 바로 옆에 적는다. 이게 없으면 면세점 탭의
-          // '오늘 적용환율'(= 전일 고시분)과 같은 숫자로 보일 때 구분이 안 된다.
-          sub = "매매기준율 " + primary.date.slice(5) + " 고시";
+          // 무엇의 값인지만 밝힌다. 며칠 자 고시인지는 굳이 알 필요가 없다.
+          sub = "매매기준율";
           if (ecb && ecb.rows && ecb.rows.length) {
             sub += " · ECB " + rate(ecb.lastRate) + " (" + ecb.lastDate.slice(5) + ")";
           }
@@ -970,12 +965,15 @@
   // 그래서 지금 할 수 있는 최선은 "왜 안 보이는지"를 정확히 말해주는 것이다.
   var SMBS_QUOTE_HOUR = 9; // 서울외국환중개 최초고시는 영업일 오전에 난다
 
+  // 값이 있으면 아무 말도 덧붙이지 않는다. 어느 날짜 고시분인지는 사용자가
+  // 알 필요가 없다 — 알아야 할 건 "내일 얼마인가"뿐이다.
+  // 값이 없을 때만 왜 없는지 말해준다.
   function tomorrowSubLabel(tomorrowApplied) {
-    if (tomorrowApplied) return tomorrowApplied.quoteDate.slice(5) + " 고시";
+    if (tomorrowApplied) return "";
     var now = new Date();
     var day = now.getDay();
-    if (day === 0 || day === 6) return "주말 — 고시 없음";
-    return now.getHours() >= SMBS_QUOTE_HOUR ? "고시는 났고 중계 대기 중" : "오늘 고시 후 확정";
+    if (day === 0 || day === 6) return "<br />주말 — 고시 없음";
+    return now.getHours() >= SMBS_QUOTE_HOUR ? "<br />고시 반영 대기 중" : "<br />오늘 고시 후 확정";
   }
 
   // ---------------------------------------------------------------------
@@ -1038,18 +1036,18 @@
       stat(
         "어제",
         yesterdayApplied ? rate(yesterdayApplied.rate) + "원" : "—",
-        dfDayLabel(yesterday) + (yesterdayApplied ? "<br />" + yesterdayApplied.quoteDate.slice(5) + " 고시" : "")
+        dfDayLabel(yesterday)
       ) +
       stat(
         "오늘",
         rate(todayApplied.rate) + "원",
-        dfDayLabel(today) + "<br />" + todayApplied.quoteDate.slice(5) + " 고시",
+        dfDayLabel(today),
         isFinite(diffYd) ? (diffYd > 0 ? "neg" : diffYd < 0 ? "pos" : "") : ""
       ) +
       stat(
         "내일",
         tomorrowApplied ? rate(tomorrowApplied.rate) + "원" : "미정",
-        dfDayLabel(FxData.shiftDays(today, 1)) + "<br />" + tomorrowSubLabel(tomorrowApplied),
+        dfDayLabel(FxData.shiftDays(today, 1)) + tomorrowSubLabel(tomorrowApplied),
         isFinite(diff) ? (diff > 0 ? "neg" : diff < 0 ? "pos" : "") : ""
       ) +
       "</div>" +
@@ -1069,7 +1067,7 @@
   // 최근 일주일 적용환율
   // ---------------------------------------------------------------------
   // 주말·공휴일에는 고시가 없어 직전 영업일 값이 그대로 이어진다. 같은 값이
-  // 며칠 반복되는 게 정상이고, 그 사실이 보이도록 '고시일' 열을 같이 보여준다.
+  // 며칠 반복되는 게 정상이다. 그 이유는 표 아래 각주로 적는다.
   function renderDfWeek() {
     var box = $("dutyFreeWeek");
     if (!box) return;
@@ -1097,7 +1095,6 @@
         var d = prev ? r.rate - prev.rate : NaN;
         var isTomorrow = tomorrow && r.appliedDate === tomorrow.appliedDate;
         var isToday = r.appliedDate === FxData.todayISO();
-        var carried = prev && prev.quoteDate === r.quoteDate; // 고시가 안 바뀐 날(주말 등)
 
         return (
           '<tr class="' +
@@ -1115,10 +1112,6 @@
           '">' +
           (!isFinite(d) ? "—" : d === 0 ? rate(0) : (d > 0 ? "▲ " : "▼ ") + rate(Math.abs(d))) +
           "</td>" +
-          '<td class="muted">' +
-          esc(r.quoteDate.slice(5)) +
-          (carried ? " (이어짐)" : "") +
-          "</td>" +
           "</tr>"
         );
       })
@@ -1130,11 +1123,11 @@
       DF_WEEK_DAYS +
       "일 적용환율</h2>" +
       '<div class="table-scroll"><table class="data-table">' +
-      "<thead><tr><th>적용일</th><th>적용환율</th><th>전일 대비</th><th>고시일</th></tr></thead>" +
+      "<thead><tr><th>적용일</th><th>적용환율</th><th>전일 대비</th></tr></thead>" +
       "<tbody>" +
       rowsHtml +
       "</tbody></table></div>" +
-      '<p class="muted small mt">고시일이 「이어짐」이면 그날 새 고시가 없어 직전 영업일 값이 그대로 적용된 것입니다(주말·공휴일).</p>' +
+      '<p class="muted small mt">주말·공휴일에는 새 고시가 없어 직전 영업일 값이 그대로 이어집니다.</p>' +
       "</div>";
   }
 
