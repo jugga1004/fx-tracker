@@ -162,6 +162,28 @@
       });
 
     registerServiceWorker();
+    startPendingPoll();
+  }
+
+  // 오늘 고시가 아직 안 들어온 날에는 페이지를 열어둔 채로도 값이 알아서 붙게 한다.
+  // 안 그러면 사용자가 "왜 안 나오지" 하며 새로고침을 반복하게 된다.
+  //
+  // 여기서 호출 간격을 조이지 않는다 — FxDomestic이 이미 10분 안에는 다시
+  // 조르지 않도록 스스로 막고 있고, Worker도 빈 응답을 10분 캐시한다.
+  // 타이머는 한 번 걸고 안 지운다. 조건 검사 자체는 localStorage 읽기 한 번이라
+  // 사실상 공짜고, 지워두면 날짜가 바뀐 뒤 다시 걸 사람이 없다.
+  var PENDING_POLL_MS = 10 * 60 * 1000;
+
+  function startPendingPoll() {
+    setInterval(function () {
+      if (document.hidden) return; // 안 보는 탭까지 찌를 이유는 없다
+      if (FxDomestic.latestDate() === FxData.todayISO()) return; // 이미 받았다
+      var now = new Date();
+      var day = now.getDay();
+      if (day === 0 || day === 6) return; // 주말은 고시 자체가 없다
+      if (now.getHours() < SMBS_QUOTE_HOUR) return; // 고시 전이면 물어봐야 소용없다
+      syncDomestic();
+    }, PENDING_POLL_MS);
   }
 
   function showGlobalError(msg) {
@@ -934,16 +956,26 @@
   }
 
   // 내일 적용분이 '미정'인 이유는 두 가지인데 사용자 입장에서 뜻이 전혀 다르다.
-  //  (1) 아직 오늘 고시(11시경) 전 — 기다리는 수밖에 없다
-  //  (2) 고시는 나왔는데 우리 데이터가 아직 못 따라옴 — GitHub Actions 예약 실행이
-  //      몇 시간씩 밀리는 일이 흔하다. 이건 잠시 뒤 다시 보면 해결된다.
-  // 둘을 구분해줘야 "왜 안 나오지"를 헤매지 않는다.
+  //  (1) 아직 오늘 고시 전 — 기다리는 수밖에 없다
+  //  (2) 고시는 이미 났는데 우리가 못 받음 — 기다리면 되지만 '없는 값'은 아니다
+  //
+  // 이 구분이 중요한 이유: 매매기준율을 실제로 고시하는 곳은 **서울외국환중개**이고,
+  // 우리가 읽는 수출입은행 오픈API는 그걸 중계한다. 중계가 늦는다.
+  // 2026-09-23 09:36 실측 — dutyfreemania(서울외국환중개 직독)는 이미 1,360.0을
+  // 보여주고 있었는데 수출입은행은 missing:["2026-09-23"]이었다.
+  // 그때 "오늘 고시 후 확정"이라고 띄우면 거짓말이 된다. 고시는 이미 났으니까.
+  //
+  // 서울외국환중개 직독은 막혀 있다(당일 값이 HTML에 없고 기간 조회는 로그인 필요).
+  // 네이버·하나은행도 확인했지만 매매기준율이 아니거나 JS로 그린다.
+  // 그래서 지금 할 수 있는 최선은 "왜 안 보이는지"를 정확히 말해주는 것이다.
+  var SMBS_QUOTE_HOUR = 9; // 서울외국환중개 최초고시는 영업일 오전에 난다
+
   function tomorrowSubLabel(tomorrowApplied) {
     if (tomorrowApplied) return tomorrowApplied.quoteDate.slice(5) + " 고시";
-    // 고시는 오전 중에 나온다(2026-09-14 실측 10:20에 이미 있었음).
-    // 그 시각을 넘겼는데도 없으면 '아직 안 나온 것'이 아니라 '우리가 못 받은 것'이다.
-    var h = new Date().getHours();
-    return h >= 10 ? "오늘 고시 반영 대기 중" : "오늘 고시 후 확정";
+    var now = new Date();
+    var day = now.getDay();
+    if (day === 0 || day === 6) return "주말 — 고시 없음";
+    return now.getHours() >= SMBS_QUOTE_HOUR ? "고시는 났고 중계 대기 중" : "오늘 고시 후 확정";
   }
 
   // ---------------------------------------------------------------------
