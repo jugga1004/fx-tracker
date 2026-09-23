@@ -64,6 +64,7 @@ export default {
             service: "fx-tracker 실시간 고시환율",
             keyConfigured: Boolean(env.KOREAEXIM_KEY),
             source: "한국수출입은행 오픈API (매매기준율)",
+            rev: "smbs-probe-1",
           },
           200,
           origin
@@ -126,6 +127,11 @@ export default {
         // 응답 형식이 바뀌었을 때 추측하지 않고 바로 확인하기 위한 것.
         const debug = new URL(request.url).searchParams.get("debug") === "1";
         return json(await fetchLiveRates(debug), 200, origin);
+      }
+
+      if (path === "/v1/smbs") {
+        const which = new URL(request.url).searchParams.get("page") || "today";
+        return json(await probeSmbs(which), 200, origin);
       }
 
       return json({ ok: false, error: "없는 경로입니다. /v1/recent, /v1/product, /v1/health 를 쓰세요." }, 404, origin);
@@ -434,4 +440,49 @@ function json(body, status, origin) {
     status,
     headers: { "content-type": "application/json; charset=utf-8", ...corsHeaders(origin) },
   });
+}
+
+// ---------------------------------------------------------------------------
+// 서울외국환중개 직독 (조사용)
+// ---------------------------------------------------------------------------
+// 매매기준율을 실제로 고시하는 곳은 여기다. 수출입은행은 중계일 뿐이고 늦는다.
+// 2026-09-23 09:36 실측: 서울외국환중개 값(1,360.0)은 이미 나와 있었는데
+// 수출입은행은 missing이었다.
+//
+// 주소는 하드코딩한다. 바깥에서 받은 주소를 그대로 fetch하면 이 Worker가
+// 열린 프록시가 되어 남의 서버를 찌르는 데 쓰인다.
+const SMBS_PAGES = {
+  today: "https://www.smbs.biz/ExRate/TodayExRate.jsp",
+  todayPop: "https://www.smbs.biz/ExRate/TodayExRate_p.jsp",
+  std: "https://www.smbs.biz/ExRate/StdExRate.jsp",
+};
+
+async function probeSmbs(which) {
+  const url = SMBS_PAGES[which] || SMBS_PAGES.today;
+  try {
+    const res = await fetch(url, {
+      headers: {
+        // 기본 UA로 가면 막는 사이트가 있다.
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+        "Accept-Language": "ko-KR,ko;q=0.9",
+      },
+      cf: { cacheTtl: 60, cacheEverything: true },
+    });
+    const text = await res.text();
+    // 숫자가 HTML에 실려 오는지가 관건이다. 1,3xx.x / 8xx.xx 패턴을 세어 본다.
+    const nums = text.match(/\b[0-9]{1,2},[0-9]{3}\.[0-9]{1,2}\b|\b[0-9]{3}\.[0-9]{2}\b/g) || [];
+    return {
+      ok: res.ok,
+      url,
+      status: res.status,
+      contentType: res.headers.get("content-type"),
+      bytes: text.length,
+      numbersFound: nums.slice(0, 20),
+      numberCount: nums.length,
+      hasScript: /<script/i.test(text),
+      head: text.slice(0, 1200),
+    };
+  } catch (err) {
+    return { ok: false, url, error: String(err && err.message ? err.message : err) };
+  }
 }
