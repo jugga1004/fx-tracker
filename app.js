@@ -12,7 +12,6 @@
     ccy: "USD",
     costCcy: "JPY", // 결제비용 탭은 여행지 통화가 기본이라 엔으로 연다
     costAmount: 100000,
-    dfPayMethod: "card", // 현지 구매가를 어떤 결제 수단으로 환산할지
     rangeDays: 0, // 0보다 크면 일 단위, 아니면 rangeMonths를 쓴다
     rangeMonths: 12,
     domesticError: null, // 국내 고시환율 연동 실패 메시지 (있으면 ECB로 폴백)
@@ -949,10 +948,23 @@
     // 결제 수단 토글과 한도·세율 입력은 카드를 다시 그릴 때마다 새로 생긴다.
     // 그래서 개별 요소가 아니라 컨테이너에 한 번만 걸어 둔다.
     $("dfCompare").addEventListener("click", function (e) {
-      var btn = e.target.closest("button[data-pay]");
-      if (!btn) return;
-      state.dfPayMethod = btn.dataset.pay;
-      renderDfCompare();
+      var one = e.target.closest("button[data-shop]");
+      if (one) {
+        var it = Portfolio.listItems().filter(function (x) {
+          return x.id === one.dataset.shop;
+        })[0];
+        if (it) lookupShop(it);
+        return;
+      }
+      if (e.target.closest("#shopAll")) {
+        // 한꺼번에 찌르면 쿼터가 아깝고 실패해도 뭐가 실패했는지 모른다.
+        // 아직 결과가 없는 것만, 순서대로 부른다.
+        Portfolio.listItems()
+          .filter(function (x) {
+            return !shopBest(x) && !shopBusy[x.id];
+          })
+          .forEach(lookupShop);
+      }
     });
 
     $("dfAllowance").addEventListener("change", function (e) {
@@ -1168,53 +1180,58 @@
   }
 
   // ---------------------------------------------------------------------
-  // 어디서 사는 게 싼가 — 면세점 vs 현지 vs 국내
+  // 어디서 사는 게 싼가 — 면세점 vs 국내 쇼핑몰
   // ---------------------------------------------------------------------
-  // 면세점이 늘 싼 게 아니다. 적용환율에 스프레드가 없는 건 맞지만, 현지
-  // 정가가 더 낮거나 국내 할인가가 더 낮은 경우가 흔하다. 게다가 면세한도를
-  // 넘기면 초과분에 세금이 붙어 순위가 뒤집힌다 — 그 지점을 짚는 게 목표다.
+  // 면세점이 늘 싼 게 아니다. 같은 물건이 국내에 더 싸게 있을 수 있고,
+  // 면세한도를 넘기면 초과분에 세금이 붙어 순위가 아예 뒤집힌다.
+  //
+  // 검색은 상품명을 그대로 넘긴다. 그래서 엉뚱한 물건이 잡힐 수 있다 —
+  // 찾아온 상품명과 몰 이름을 같이 보여주고 판단은 사람이 한다.
+  // "이게 같은 물건입니다"라고 우리가 단정하지 않는다.
 
-  var DF_PAY_METHODS = [
-    { key: "card", label: "카드" },
-    { key: "cash", label: "현찰 환전" },
-    { key: "travel", label: "트래블 카드" },
-  ];
+  var shopBusy = {}; // 상품 id -> 조회 중
 
-  // 선택한 결제 수단의 실효환율(원 / 기준단위)을 꺼낸다.
-  function payRate(code, methodKey) {
-    var base = FxDomestic.latest(code);
-    if (!base) return NaN;
-    var applied = FxDomestic.appliedOn(code, FxData.todayISO());
-    var rows = Cost.methods(base.rate, applied ? applied.rate : NaN, Portfolio.costOptions(code));
-    for (var i = 0; i < rows.length; i++) {
-      if (rows[i].key === methodKey) return rows[i].rate;
-    }
-    return NaN;
+  function shopBest(it) {
+    if (!it.shop || !it.shop.items || !it.shop.items.length) return null;
+    return it.shop.items[0]; // Worker가 가격 오름차순으로 준다
   }
 
-  // 한 상품의 세 가격을 원화로 맞춰 낸다. 없는 값은 NaN으로 두고 화면에서 '—'.
-  function itemPrices(it) {
-    var applied = dfTodayRate();
-    var dutyFree = applied ? it.usd * applied.rate : NaN;
-
-    var local = NaN;
-    if (it.localPrice > 0) {
-      var meta = FxData.CURRENCIES[it.localCcy] || FxData.CURRENCIES.JPY;
-      var r = payRate(it.localCcy, state.dfPayMethod);
-      if (isFinite(r)) local = (it.localPrice / meta.unit) * r;
+  function lookupShop(it) {
+    var q = (it.name || "").trim();
+    var box = $("dfCompareMsg");
+    if (!q) {
+      if (box) box.innerHTML = '<span class="neg">상품명이 있어야 검색할 수 있습니다.</span>';
+      return;
     }
-
-    var domestic = it.domesticKrw > 0 ? it.domesticKrw : NaN;
-    return { dutyFree: dutyFree, local: local, domestic: domestic };
+    shopBusy[it.id] = true;
+    renderDfCompare();
+    Promise.resolve()
+      .then(function () {
+        return FxDomestic.fetchShop(q);
+      })
+      .then(
+        function (r) {
+          shopBusy[it.id] = false;
+          Portfolio.setItemShop(it.id, {
+            checkedAt: new Date().toISOString(),
+            query: r.query,
+            items: (r.items || []).slice(0, 5),
+          });
+          renderDfCompare();
+        },
+        function (err) {
+          shopBusy[it.id] = false;
+          if (box) box.innerHTML = '<span class="neg">' + esc(err.message) + "</span>";
+          renderDfCompare();
+        }
+      );
   }
 
   function renderDfCompare() {
     var box = $("dfCompare");
     if (!box) return;
 
-    var items = Portfolio.listItems().filter(function (it) {
-      return it.localPrice > 0 || it.domesticKrw > 0;
-    });
+    var items = Portfolio.listItems();
     if (!items.length) {
       box.innerHTML = "";
       return;
@@ -1222,79 +1239,79 @@
 
     var duty = dutyState();
     var taxMult = duty.overLimit ? 1 + duty.taxPct / 100 : 1;
+    var applied = dfTodayRate();
 
     var rows = items
       .map(function (it) {
-        var p = itemPrices(it);
-        // 한도를 넘긴 뒤 더 사는 물건에는 간이세율이 붙는다. 그 세율을 얹은 값으로
-        // 비교해야 "면세점이 오히려 비싼" 역전이 보인다.
-        var dutyTaxed = isFinite(p.dutyFree) ? p.dutyFree * taxMult : NaN;
-        var cands = [
-          { key: "duty", label: "면세점", krw: dutyTaxed },
-          { key: "local", label: "현지", krw: p.local },
-          { key: "dom", label: "국내", krw: p.domestic },
-        ].filter(function (c) {
-          return isFinite(c.krw);
-        });
-        cands.sort(function (a, b) {
-          return a.krw - b.krw;
-        });
-        var best = cands.length ? cands[0] : null;
+        // 한도를 넘긴 뒤 더 사는 물건에는 간이세율이 붙는다. 그걸 얹어야
+        // "면세점이 오히려 비싼" 역전이 보인다.
+        var dutyKrw = applied ? it.usd * applied.rate * taxMult : NaN;
+        var best = shopBest(it);
+        var diff = best && isFinite(dutyKrw) ? best.price - dutyKrw : NaN;
 
-        function cell(v, isBest) {
-          if (!isFinite(v)) return '<td class="muted">—</td>';
-          return "<td" + (isBest ? ' class="pos"' : "") + ">" + won(v) + (isBest ? " ✓" : "") + "</td>";
+        var shopCell;
+        if (shopBusy[it.id]) {
+          shopCell = '<td colspan="2"><span class="loading">찾는 중...</span></td>';
+        } else if (!best) {
+          shopCell =
+            '<td colspan="2"><button type="button" class="link-btn" data-shop="' +
+            esc(it.id) +
+            '">최저가 찾기</button></td>';
+        } else {
+          shopCell =
+            "<td>" +
+            (best.link
+              ? '<a href="' + esc(best.link) + '" target="_blank" rel="noopener noreferrer">' + won(best.price) + " ↗</a>"
+              : won(best.price)) +
+            '<br /><span class="muted small">' +
+            esc(best.mall || "판매처 미상") +
+            "</span></td>" +
+            '<td class="' +
+            (isFinite(diff) ? (diff < 0 ? "pos" : diff > 0 ? "neg" : "muted") : "muted") +
+            '">' +
+            (isFinite(diff)
+              ? (diff < 0 ? "국내가 " + won(-diff) + " 쌈" : diff > 0 ? "면세점이 " + won(diff) + " 쌈" : "같음")
+              : "—") +
+            '<br /><button type="button" class="link-btn" data-shop="' +
+            esc(it.id) +
+            '">다시 찾기</button></td>';
         }
 
-        var localMeta = FxData.CURRENCIES[it.localCcy] || FxData.CURRENCIES.JPY;
         return (
           "<tr><th>" +
           (it.name ? esc(it.name) : '<span class="muted">이름 없음</span>') +
           '<br /><span class="muted small">$' +
           num(it.usd, 2) +
-          (it.localPrice > 0 ? " · 현지 " + num(it.localPrice, 0) + " " + esc(localMeta.amountLabel) : "") +
+          (best && best.title ? " · 검색결과: " + esc(best.title.slice(0, 40)) : "") +
           "</span></th>" +
-          cell(dutyTaxed, best && best.key === "duty") +
-          cell(p.local, best && best.key === "local") +
-          cell(p.domestic, best && best.key === "dom") +
           "<td>" +
-          (best ? "<strong>" + esc(best.label) + "</strong>" : '<span class="muted">—</span>') +
-          "</td></tr>"
+          (isFinite(dutyKrw) ? won(dutyKrw) : '<span class="muted">—</span>') +
+          "</td>" +
+          shopCell +
+          "</tr>"
         );
       })
       .join("");
 
-    var methodBtns = DF_PAY_METHODS.map(function (m) {
-      return (
-        '<button type="button" data-pay="' +
-        m.key +
-        '"' +
-        (m.key === state.dfPayMethod ? ' class="is-active"' : "") +
-        ">" +
-        esc(m.label) +
-        "</button>"
-      );
-    }).join("");
-
     box.innerHTML =
       '<div class="card"><div class="card__head"><h2>어디서 사는 게 싼가</h2>' +
-      '<div class="seg" id="dfPayToggle" role="group" aria-label="현지 결제 수단">' +
-      methodBtns +
-      "</div></div>" +
-      '<p class="muted small">현지 구매가는 위에서 고른 결제 수단의 실효환율로 환산합니다. ' +
+      '<button type="button" id="shopAll" class="ghost">전체 찾기</button></div>' +
+      '<p class="muted small">등록한 상품명으로 국내 쇼핑몰 최저가를 찾아 면세점가와 견줍니다. ' +
       (duty.overLimit
-        ? "<strong>면세 한도를 넘었기 때문에 면세점가에는 간이세율 " +
-          num(duty.taxPct, 0) +
-          "%를 얹어 비교합니다.</strong>"
+        ? "<strong>면세 한도를 넘었기 때문에 면세점가에 간이세율 " + num(duty.taxPct, 0) + "%를 얹어 비교합니다.</strong>"
         : "면세 한도 안이라 면세점가에는 세금을 얹지 않았습니다.") +
       "</p>" +
       '<div class="table-scroll"><table class="data-table">' +
       "<thead><tr><th>상품</th><th>면세점" +
       (duty.overLimit ? "<br /><span class='muted small'>세금 포함</span>" : "") +
-      "</th><th>현지</th><th>국내</th><th>최저</th></tr></thead>" +
+      "</th><th>국내 최저가</th><th>차이</th></tr></thead>" +
       "<tbody>" +
       rows +
-      "</tbody></table></div></div>";
+      "</tbody></table></div>" +
+      '<div id="dfCompareMsg" class="muted small mt"></div>' +
+      '<p class="note mt">검색은 상품명을 그대로 넘기므로 <strong>다른 물건이 잡힐 수 있습니다.</strong> ' +
+      "찾아온 상품명과 판매처를 확인하고 판단하세요. 국내가에는 배송비·카드 혜택이 빠져 있고, " +
+      "면세점가에는 환율 변동이 남아 있습니다.</p></div>";
   }
 
   // ---------------------------------------------------------------------
