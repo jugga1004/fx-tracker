@@ -64,7 +64,7 @@ export default {
             service: "fx-tracker 실시간 고시환율",
             keyConfigured: Boolean(env.KOREAEXIM_KEY),
             source: "한국수출입은행 오픈API (매매기준율)",
-            rev: "smbs-probe-3",
+            rev: "smbs-probe-4",
           },
           200,
           origin
@@ -461,6 +461,9 @@ const SMBS_PAGES = {
   bareHttps: "https://smbs.biz/ExRate/TodayExRate.jsp",
   stdHttp: "http://www.smbs.biz/ExRate/StdExRate.jsp",
   rootHttp: "http://www.smbs.biz/",
+  flash: "http://www.smbs.biz/Flash/TodayExRate_flash.jsp",
+  dayDol: "http://www.smbs.biz/ExRate/DayDolWonExRate.jsp",
+  raise: "http://www.smbs.biz/ExRate/RaiseExRate.jsp",
 };
 
 async function probeSmbs(which) {
