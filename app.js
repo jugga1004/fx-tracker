@@ -947,26 +947,6 @@
 
     // 결제 수단 토글과 한도·세율 입력은 카드를 다시 그릴 때마다 새로 생긴다.
     // 그래서 개별 요소가 아니라 컨테이너에 한 번만 걸어 둔다.
-    $("dfCompare").addEventListener("click", function (e) {
-      var one = e.target.closest("button[data-shop]");
-      if (one) {
-        var it = Portfolio.listItems().filter(function (x) {
-          return x.id === one.dataset.shop;
-        })[0];
-        if (it) lookupShop(it);
-        return;
-      }
-      if (e.target.closest("#shopAll")) {
-        // 한꺼번에 찌르면 쿼터가 아깝고 실패해도 뭐가 실패했는지 모른다.
-        // 아직 결과가 없는 것만, 순서대로 부른다.
-        Portfolio.listItems()
-          .filter(function (x) {
-            return !shopBest(x) && !shopBusy[x.id];
-          })
-          .forEach(lookupShop);
-      }
-    });
-
     $("dfAllowance").addEventListener("change", function (e) {
       if (!e.target.closest("#dutyAllowance, #dutyTaxPct")) return;
       Portfolio.setDuty($("dutyAllowance").value, $("dutyTaxPct").value);
@@ -1180,52 +1160,25 @@
   }
 
   // ---------------------------------------------------------------------
-  // 어디서 사는 게 싼가 — 면세점 vs 국내 쇼핑몰
+  // 어디서 사는 게 싼가 — 면세점가를 원화로 놓고, 비교는 비교 사이트로
   // ---------------------------------------------------------------------
-  // 면세점이 늘 싼 게 아니다. 같은 물건이 국내에 더 싸게 있을 수 있고,
-  // 면세한도를 넘기면 초과분에 세금이 붙어 순위가 아예 뒤집힌다.
+  // 원래 네이버 쇼핑 검색 API로 최저가를 자동으로 끌어오려 했는데,
+  // 그 API가 2026-07-31에 종료됐다(공지 32564). 대체 API도 제공되지 않는다.
+  // 남은 공식 API는 11번가·쿠팡처럼 '한 몰짜리'라 최저가라고 부를 수가 없다.
   //
-  // 검색은 상품명을 그대로 넘긴다. 그래서 엉뚱한 물건이 잡힐 수 있다 —
-  // 찾아온 상품명과 몰 이름을 같이 보여주고 판단은 사람이 한다.
-  // "이게 같은 물건입니다"라고 우리가 단정하지 않는다.
+  // 그래서 방향을 바꿨다. 가격비교는 이미 다나와와 네이버쇼핑이 하는 일이고,
+  // 우리가 한 몰 가격으로 그걸 어설프게 흉내 내면 오히려 잘못된 판단을 부른다.
+  // 우리가 할 일은 **면세점가를 원화로(세금까지 얹어) 환산해 놓는 것**이고,
+  // 비교는 그걸 제일 잘하는 곳으로 한 번에 보내주면 된다.
+  //
+  // 부수 효과로 의존성이 0이 됐다. 키도 없고, 쿼터도 없고, 남의 API가
+  // 없어져도 안 깨진다.
 
-  var shopBusy = {}; // 상품 id -> 조회 중
-
-  function shopBest(it) {
-    if (!it.shop || !it.shop.items || !it.shop.items.length) return null;
-    return it.shop.items[0]; // Worker가 가격 오름차순으로 준다
-  }
-
-  function lookupShop(it) {
-    var q = (it.name || "").trim();
-    var box = $("dfCompareMsg");
-    if (!q) {
-      if (box) box.innerHTML = '<span class="neg">상품명이 있어야 검색할 수 있습니다.</span>';
-      return;
-    }
-    shopBusy[it.id] = true;
-    renderDfCompare();
-    Promise.resolve()
-      .then(function () {
-        return FxDomestic.fetchShop(q);
-      })
-      .then(
-        function (r) {
-          shopBusy[it.id] = false;
-          Portfolio.setItemShop(it.id, {
-            checkedAt: new Date().toISOString(),
-            query: r.query,
-            items: (r.items || []).slice(0, 5),
-          });
-          renderDfCompare();
-        },
-        function (err) {
-          shopBusy[it.id] = false;
-          if (box) box.innerHTML = '<span class="neg">' + esc(err.message) + "</span>";
-          renderDfCompare();
-        }
-      );
-  }
+  var SHOP_SITES = [
+    { key: "naver", label: "네이버쇼핑", url: "https://search.shopping.naver.com/search/all?query=" },
+    { key: "danawa", label: "다나와", url: "https://search.danawa.com/dsearch.php?k1=" },
+    { key: "coupang", label: "쿠팡", url: "https://www.coupang.com/np/search?q=" },
+  ];
 
   function renderDfCompare() {
     var box = $("dfCompare");
@@ -1244,74 +1197,52 @@
     var rows = items
       .map(function (it) {
         // 한도를 넘긴 뒤 더 사는 물건에는 간이세율이 붙는다. 그걸 얹어야
-        // "면세점이 오히려 비싼" 역전이 보인다.
+        // 국내가와 견줄 수 있는 '실제로 낼 돈'이 된다.
         var dutyKrw = applied ? it.usd * applied.rate * taxMult : NaN;
-        var best = shopBest(it);
-        var diff = best && isFinite(dutyKrw) ? best.price - dutyKrw : NaN;
-
-        var shopCell;
-        if (shopBusy[it.id]) {
-          shopCell = '<td colspan="2"><span class="loading">찾는 중...</span></td>';
-        } else if (!best) {
-          shopCell =
-            '<td colspan="2"><button type="button" class="link-btn" data-shop="' +
-            esc(it.id) +
-            '">최저가 찾기</button></td>';
-        } else {
-          shopCell =
-            "<td>" +
-            (best.link
-              ? '<a href="' + esc(best.link) + '" target="_blank" rel="noopener noreferrer">' + won(best.price) + " ↗</a>"
-              : won(best.price)) +
-            '<br /><span class="muted small">' +
-            esc(best.mall || "판매처 미상") +
-            "</span></td>" +
-            '<td class="' +
-            (isFinite(diff) ? (diff < 0 ? "pos" : diff > 0 ? "neg" : "muted") : "muted") +
-            '">' +
-            (isFinite(diff)
-              ? (diff < 0 ? "국내가 " + won(-diff) + " 쌈" : diff > 0 ? "면세점이 " + won(diff) + " 쌈" : "같음")
-              : "—") +
-            '<br /><button type="button" class="link-btn" data-shop="' +
-            esc(it.id) +
-            '">다시 찾기</button></td>';
-        }
+        var q = encodeURIComponent((it.name || "").trim());
+        var links = q
+          ? SHOP_SITES.map(function (s) {
+              return (
+                '<a href="' + s.url + q + '" target="_blank" rel="noopener noreferrer">' + esc(s.label) + " ↗</a>"
+              );
+            }).join(" · ")
+          : '<span class="muted">상품명을 넣으면 검색 링크가 생깁니다</span>';
 
         return (
           "<tr><th>" +
           (it.name ? esc(it.name) : '<span class="muted">이름 없음</span>') +
           '<br /><span class="muted small">$' +
           num(it.usd, 2) +
-          (best && best.title ? " · 검색결과: " + esc(best.title.slice(0, 40)) : "") +
           "</span></th>" +
-          "<td>" +
-          (isFinite(dutyKrw) ? won(dutyKrw) : '<span class="muted">—</span>') +
+          "<td><strong>" +
+          (isFinite(dutyKrw) ? won(dutyKrw) : "—") +
+          "</strong>" +
+          (duty.overLimit && isFinite(dutyKrw)
+            ? '<br /><span class="muted small">세금 포함</span>'
+            : "") +
           "</td>" +
-          shopCell +
-          "</tr>"
+          '<td class="shop-links">' +
+          links +
+          "</td></tr>"
         );
       })
       .join("");
 
     box.innerHTML =
-      '<div class="card"><div class="card__head"><h2>어디서 사는 게 싼가</h2>' +
-      '<button type="button" id="shopAll" class="ghost">전체 찾기</button></div>' +
-      '<p class="muted small">등록한 상품명으로 국내 쇼핑몰 최저가를 찾아 면세점가와 견줍니다. ' +
+      '<div class="card"><h2>어디서 사는 게 싼가</h2>' +
+      '<p class="muted small">면세점 달러가를 <strong>실제로 낼 원화</strong>로 환산해 둡니다. ' +
       (duty.overLimit
-        ? "<strong>면세 한도를 넘었기 때문에 면세점가에 간이세율 " + num(duty.taxPct, 0) + "%를 얹어 비교합니다.</strong>"
-        : "면세 한도 안이라 면세점가에는 세금을 얹지 않았습니다.") +
-      "</p>" +
+        ? "<strong>면세 한도를 넘었기 때문에 간이세율 " + num(duty.taxPct, 0) + "%를 얹었습니다.</strong>"
+        : "면세 한도 안이라 세금은 얹지 않았습니다.") +
+      " 이 금액을 들고 아래 링크에서 국내가와 견줘보세요.</p>" +
       '<div class="table-scroll"><table class="data-table">' +
-      "<thead><tr><th>상품</th><th>면세점" +
-      (duty.overLimit ? "<br /><span class='muted small'>세금 포함</span>" : "") +
-      "</th><th>국내 최저가</th><th>차이</th></tr></thead>" +
+      "<thead><tr><th>상품</th><th>면세점 실부담</th><th>국내가 찾아보기</th></tr></thead>" +
       "<tbody>" +
       rows +
       "</tbody></table></div>" +
-      '<div id="dfCompareMsg" class="muted small mt"></div>' +
-      '<p class="note mt">검색은 상품명을 그대로 넘기므로 <strong>다른 물건이 잡힐 수 있습니다.</strong> ' +
-      "찾아온 상품명과 판매처를 확인하고 판단하세요. 국내가에는 배송비·카드 혜택이 빠져 있고, " +
-      "면세점가에는 환율 변동이 남아 있습니다.</p></div>";
+      '<p class="note mt">가격비교는 다나와·네이버쇼핑이 훨씬 잘합니다. 우리는 ' +
+      "<strong>면세점가를 견줄 수 있는 형태로 만들어 주는 것</strong>까지만 합니다. " +
+      "국내가에는 배송비와 카드 혜택이, 면세점가에는 환율 변동이 각각 빠져 있으니 마지막 판단은 직접 하세요.</p></div>";
   }
 
   // ---------------------------------------------------------------------

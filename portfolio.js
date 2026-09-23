@@ -92,10 +92,6 @@
     });
     if (!isFinite(Number(s.settings.dutyAllowanceUsd))) s.settings.dutyAllowanceUsd = DEFAULT_SETTINGS.dutyAllowanceUsd;
     if (!isFinite(Number(s.settings.dutySimpleTaxPct))) s.settings.dutySimpleTaxPct = DEFAULT_SETTINGS.dutySimpleTaxPct;
-    // 손으로 적던 현지가·국내가는 걷어냈다. 예전 데이터에 남아 있어도 무시한다.
-    s.items.forEach(function (it) {
-      if (!it.shop || typeof it.shop !== "object") it.shop = null;
-    });
     return s;
   }
 
@@ -472,18 +468,6 @@
       name: String(rec.name || "").trim(),
       usd: usd,
       url: url,
-      shop: null, // 쇼핑 최저가 조회 결과. 조회하면 채워진다.
-    });
-    save();
-    return s.items;
-  }
-
-  // 쇼핑 최저가 조회 결과를 상품에 붙인다. 공유 저장소로 같이 퍼져서
-  // 다른 사람도 같은 비교를 보게 된다.
-  function setItemShop(id, payload) {
-    var s = load();
-    s.items.forEach(function (it) {
-      if (it.id === id) it.shop = payload || null;
     });
     save();
     return s.items;
@@ -716,7 +700,6 @@
     addItem: addItem,
     removeItem: removeItem,
     listItems: listItems,
-    setItemShop: setItemShop,
     addRoute: addRoute,
     removeRoute: removeRoute,
     addObservation: addObservation,

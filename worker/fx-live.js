@@ -63,9 +63,8 @@ export default {
             ok: true,
             service: "fx-tracker 실시간 고시환율",
             keyConfigured: Boolean(env.KOREAEXIM_KEY),
-            shopKeyConfigured: Boolean(env.NAVER_CLIENT_ID && env.NAVER_CLIENT_SECRET),
             source: "한국수출입은행 오픈API (매매기준율) + 서울외국환중개 당일 직독",
-            rev: "shop-1",
+            rev: "shoplinks-1",
           },
           200,
           origin
@@ -170,12 +169,6 @@ export default {
           return json({ ok: false, conflict: true, ...res.current }, 409, origin);
         }
         return json({ ok: true, rev: res.current.rev, updatedAt: res.current.updatedAt }, 200, origin);
-      }
-
-      if (path === "/v1/shop") {
-        const q = new URL(request.url).searchParams.get("q") || "";
-        const r = await fetchShop(q, env);
-        return json(r, r.ok ? 200 : 502, origin);
       }
 
       return json({ ok: false, error: "없는 경로입니다. /v1/recent, /v1/product, /v1/health 를 쓰세요." }, 404, origin);
@@ -621,75 +614,8 @@ async function writeState(env, data, baseRev) {
   return { conflict: false, current: next };
 }
 
-// ---------------------------------------------------------------------------
-// 쇼핑 최저가 (네이버 쇼핑 검색 API)
-// ---------------------------------------------------------------------------
-// 면세점이 늘 싼 게 아니다. 국내 쇼핑몰이 더 쌀 때가 있는데, 그걸 확인하려면
-// 같은 상품을 여러 몰에서 찾아봐야 한다.
-//
-// 공식 API를 쓴다. 스크래핑은 약관 위반이고 화면이 바뀌면 조용히 깨진다.
-// 네이버 쇼핑 웹페이지는 418(봇 차단)로 막혀 있기도 하다.
-//   https://developers.naver.com → 애플리케이션 등록 → 검색 API
-//   키는 Worker Secret(NAVER_CLIENT_ID / NAVER_CLIENT_SECRET)에만 둔다.
-//
-// 상품명이 그대로 검색어가 되므로 결과가 엉뚱할 수 있다. 그래서 몰 이름과
-// 상품명을 같이 돌려주고 판단은 사람이 한다 — 자동으로 "이게 같은 물건"이라고
-// 단정하지 않는다.
-const NAVER_SHOP = "https://openapi.naver.com/v1/search/shop.json";
-const SHOP_TTL = 60 * 60 * 6; // 가격이 분 단위로 바뀌진 않는다
-const SHOP_MAX = 10;
-
-function stripTags(s) {
-  return String(s || "")
-    .replace(/<[^>]*>/g, "")
-    .replace(/&quot;/g, '"')
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .trim();
-}
-
-async function fetchShop(query, env) {
-  const q = String(query || "").trim();
-  if (!q) return { ok: false, error: "검색어가 없습니다." };
-  if (!env.NAVER_CLIENT_ID || !env.NAVER_CLIENT_SECRET) {
-    return {
-      ok: false,
-      error:
-        "쇼핑 검색 키가 없습니다. developers.naver.com에서 검색 API를 등록하고 " +
-        "Worker Secret에 NAVER_CLIENT_ID / NAVER_CLIENT_SECRET 을 넣어주세요.",
-      keyConfigured: false,
-    };
-  }
-
-  const url = NAVER_SHOP + "?query=" + encodeURIComponent(q) + "&display=" + SHOP_MAX + "&sort=asc";
-  try {
-    const res = await fetch(url, {
-      headers: {
-        "X-Naver-Client-Id": env.NAVER_CLIENT_ID,
-        "X-Naver-Client-Secret": env.NAVER_CLIENT_SECRET,
-      },
-      cf: { cacheTtl: SHOP_TTL, cacheEverything: true },
-    });
-    if (!res.ok) {
-      const body = await res.text();
-      return { ok: false, error: "쇼핑 검색 실패 (" + res.status + ")", detail: body.slice(0, 200) };
-    }
-    const data = await res.json();
-    const items = (data.items || [])
-      .map((it) => ({
-        title: stripTags(it.title),
-        mall: stripTags(it.mallName),
-        price: Number(it.lprice) || 0,
-        link: it.link,
-        brand: stripTags(it.brand),
-        maker: stripTags(it.maker),
-      }))
-      .filter((x) => x.price > 0)
-      .sort((a, b) => a.price - b.price);
-
-    return { ok: true, query: q, total: data.total || items.length, items };
-  } catch (err) {
-    return { ok: false, error: String(err && err.message ? err.message : err) };
-  }
-}
+// 네이버 쇼핑 검색 API는 2026-07-31에 종료됐다(개발자센터 공지 32564).
+// 유예도 대체 API도 없고 API HUB 이관 대상에서도 빠졌다.
+// 남은 공식 API는 11번가·쿠팡처럼 한 몰짜리라 '최저가'라고 부를 수가 없다.
+// 그래서 자동 조회를 걷어내고, 앱은 면세점가를 원화로 환산해 주는 데까지만 한다.
+// 비교는 다나와·네이버쇼핑 검색 링크로 넘긴다 — 키도 쿼터도 필요 없고 안 깨진다.

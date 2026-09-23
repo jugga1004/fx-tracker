@@ -795,3 +795,10 @@ button.danger {
     font-size: 0.8rem;
   }
 }
+
+/* 비교 사이트 링크. 좁은 화면에서 줄바꿈되게 둔다. */
+.shop-links a {
+  display: inline-block;
+  white-space: nowrap;
+  margin: 2px 0;
+}
