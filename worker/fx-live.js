@@ -50,8 +50,8 @@ export default {
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: corsHeaders(origin) });
     }
-    if (request.method !== "GET") {
-      return json({ ok: false, error: "GET만 지원합니다." }, 405, origin);
+    if (request.method !== "GET" && request.method !== "PUT") {
+      return json({ ok: false, error: "GET과 PUT만 지원합니다." }, 405, origin);
     }
 
     const path = new URL(request.url).pathname.replace(/\/+$/, "") || "/";
@@ -64,7 +64,7 @@ export default {
             service: "fx-tracker 실시간 고시환율",
             keyConfigured: Boolean(env.KOREAEXIM_KEY),
             source: "한국수출입은행 오픈API (매매기준율) + 서울외국환중개 당일 직독",
-            rev: "smbs-fast-1",
+            rev: "state-1",
           },
           200,
           origin
@@ -144,6 +144,31 @@ export default {
       if (path === "/v1/smbs") {
         const iso = new URL(request.url).searchParams.get("date") || kstToday();
         return json(await probeSmbs(iso), 200, origin);
+      }
+
+      if (path === "/v1/state") {
+        if (!env.FX_STATE) return stateUnavailable(origin);
+
+        if (request.method === "GET") {
+          return json({ ok: true, ...(await readState(env)) }, 200, origin);
+        }
+
+        let body;
+        try {
+          body = await request.json();
+        } catch {
+          return json({ ok: false, error: "JSON 본문이 필요합니다." }, 400, origin);
+        }
+        const payload = JSON.stringify(body && body.data !== undefined ? body.data : null);
+        if (payload.length > STATE_MAX_BYTES) {
+          return json({ ok: false, error: "저장할 내용이 너무 큽니다." }, 413, origin);
+        }
+        const res = await writeState(env, body.data, body.rev);
+        if (res.conflict) {
+          // 다른 사람이 먼저 저장했다. 최신본을 같이 돌려줘 클라이언트가 다시 시도하게 한다.
+          return json({ ok: false, conflict: true, ...res.current }, 409, origin);
+        }
+        return json({ ok: true, rev: res.current.rev, updatedAt: res.current.updatedAt }, 200, origin);
       }
 
       return json({ ok: false, error: "없는 경로입니다. /v1/recent, /v1/product, /v1/health 를 쓰세요." }, 404, origin);
@@ -440,7 +465,7 @@ function httpError(message, httpStatus) {
 function corsHeaders(origin) {
   return {
     "access-control-allow-origin": origin,
-    "access-control-allow-methods": "GET, OPTIONS",
+    "access-control-allow-methods": "GET, PUT, OPTIONS",
     "access-control-allow-headers": "content-type",
     "access-control-max-age": "86400",
     vary: "origin",
@@ -528,4 +553,63 @@ async function probeSmbs(iso) {
   } catch (err) {
     return { ok: false, url, error: String(err && err.message ? err.message : err) };
   }
+}
+
+// ---------------------------------------------------------------------------
+// 공유 상태 저장소 (KV)
+// ---------------------------------------------------------------------------
+// 기본값은 브라우저 localStorage다. 그러면 사람마다·기기마다 다른 화면을 본다.
+// 기획을 같이 하려면 한 벌을 공유해야 해서 KV에 통째로 얹는다.
+//
+// 충돌은 rev(정수)로 막는다. 클라이언트는 자기가 받아간 rev를 같이 보내고,
+// 그 사이 누가 먼저 저장했으면 409와 최신본을 돌려준다. 클라이언트가 최신본을
+// 받아 다시 시도하는 구조라 "모르는 새 덮어쓰기"는 일어나지 않는다.
+//
+// 주의: 이 주소를 아는 사람은 누구나 읽고 쓸 수 있다. 테스트·기획 단계용이며
+// 개인정보나 비밀을 넣으면 안 된다. 실제 서비스로 가면 인증이 앞에 붙어야 한다.
+const STATE_KEY = "shared-state-v1";
+const STATE_MAX_BYTES = 256 * 1024; // KV 값 한도(25MB)보다 훨씬 낮게. 실수로 큰 걸 밀어넣는 걸 막는다.
+
+function stateUnavailable(origin) {
+  return json(
+    {
+      ok: false,
+      error:
+        "공유 저장소가 아직 연결되지 않았습니다. Cloudflare에서 KV 네임스페이스를 만들고 " +
+        "변수 이름 FX_STATE 로 바인딩해야 합니다.",
+      bound: false,
+    },
+    503,
+    origin
+  );
+}
+
+async function readState(env) {
+  const raw = await env.FX_STATE.get(STATE_KEY);
+  if (!raw) return { rev: 0, updatedAt: null, data: null };
+  try {
+    const obj = JSON.parse(raw);
+    return {
+      rev: Number(obj.rev) || 0,
+      updatedAt: obj.updatedAt || null,
+      data: obj.data === undefined ? null : obj.data,
+    };
+  } catch {
+    // 저장된 게 깨졌으면 없는 것으로 친다. 여기서 던지면 앱이 통째로 멈춘다.
+    return { rev: 0, updatedAt: null, data: null };
+  }
+}
+
+async function writeState(env, data, baseRev) {
+  const current = await readState(env);
+  if (Number(baseRev) !== current.rev) {
+    return { conflict: true, current };
+  }
+  const next = {
+    rev: current.rev + 1,
+    updatedAt: new Date().toISOString(),
+    data,
+  };
+  await env.FX_STATE.put(STATE_KEY, JSON.stringify(next));
+  return { conflict: false, current: next };
 }
