@@ -64,7 +64,7 @@ export default {
             service: "fx-tracker 실시간 고시환율",
             keyConfigured: Boolean(env.KOREAEXIM_KEY),
             source: "한국수출입은행 오픈API (매매기준율)",
-            rev: "smbs-probe-4",
+            rev: "smbs-probe-5",
           },
           200,
           origin
@@ -479,7 +479,18 @@ async function probeSmbs(which) {
     });
     const text = await res.text();
     // 숫자가 HTML에 실려 오는지가 관건이다. 1,3xx.x / 8xx.xx 패턴을 세어 본다.
-    const nums = text.match(/\b[0-9]{1,2},[0-9]{3}\.[0-9]{1,2}\b|\b[0-9]{3}\.[0-9]{2}\b/g) || [];
+    // 쉼표 없는 1360.00 형태도 잡도록 넓힌다. 앞 정규식은 이걸 놓쳤다.
+    const nums = text.match(/[0-9]{1,3}(?:,[0-9]{3})*\.[0-9]{1,4}/g) || [];
+    // 태그를 걷어낸 본문. 표가 서버에서 그려지는지 눈으로 확인하려면 이게 있어야 한다.
+    const stripped = text
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&nbsp;/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    const tableCount = (text.match(/<table/gi) || []).length;
+    const rowCount = (text.match(/<tr/gi) || []).length;
     // 숫자가 HTML에 없으면 JS가 따로 불러온다는 뜻이다. 그 엔드포인트를 찾는다.
     const endpoints = [...new Set((text.match(/["'][^"']*\.(?:jsp|do|json|asp|php)(?:\?[^"']*)?["']/gi) || [])
       .map((x) => x.slice(1, -1)))].slice(0, 40);
@@ -497,6 +508,10 @@ async function probeSmbs(which) {
       endpoints,
       ajaxUrls,
       forms,
+      tableCount,
+      rowCount,
+      strippedLen: stripped.length,
+      stripped: stripped.slice(0, 1800),
       head: text.slice(0, 1200),
     };
   } catch (err) {
