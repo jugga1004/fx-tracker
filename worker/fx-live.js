@@ -63,8 +63,9 @@ export default {
             ok: true,
             service: "fx-tracker 실시간 고시환율",
             keyConfigured: Boolean(env.KOREAEXIM_KEY),
+            renderConfigured: renderConfigured(env),
             source: "한국수출입은행 오픈API (매매기준율) + 서울외국환중개 당일 직독",
-            rev: "canon-1",
+            rev: "render-1",
           },
           200,
           origin
@@ -133,7 +134,8 @@ export default {
         const pu = new URL(request.url);
         const target = pu.searchParams.get("url") || "";
         const debug = pu.searchParams.get("debug") === "1";
-        return json(await fetchProduct(target, debug), 200, origin);
+        const rdbg = pu.searchParams.get("render") === "1";
+        return json(await fetchProduct(target, debug, env, rdbg), 200, origin);
       }
 
       if (path === "/v1/live") {
@@ -303,7 +305,7 @@ function canonicalUrl(u) {
 
 const PRODUCT_TTL = 60 * 30; // 가격은 자주 안 바뀐다. 30분 캐시.
 
-async function fetchProduct(rawUrl, debug) {
+async function fetchProduct(rawUrl, debug, env, renderDebug) {
   let u;
   try {
     u = new URL(rawUrl);
@@ -364,7 +366,43 @@ async function fetchProduct(rawUrl, debug) {
   if (!parsed.usd && !parsed.name) {
     return { ok: false, error: "이 페이지에서 상품 정보를 찾지 못했습니다. 상품 상세 페이지 주소가 맞는지 확인해주세요." };
   }
-  return { ok: true, url: u.toString(), host: u.hostname, ...parsed };
+
+  const canonical = u.toString();
+
+  if (renderDebug) {
+    return { ok: true, renderDebug: true, url: canonical, scrape: await scrapeDiscount(canonical, env, true) };
+  }
+
+  // 정적 HTML에 할인가가 없으면(= 늘 없다) 브라우저로 렌더해서 읽는다.
+  // 렌더는 느리고 과금되므로 KV에 캐시해 같은 상품을 반복해서 띄우지 않는다.
+  if (parsed.saleUsd === null && renderConfigured(env) && env.FX_STATE) {
+    const ck = cacheKeyFor(canonical);
+    let cached = null;
+    try {
+      const raw = await env.FX_STATE.get(ck);
+      if (raw) cached = JSON.parse(raw);
+    } catch {
+      cached = null;
+    }
+    let found = cached;
+    if (!found) {
+      found = await scrapeDiscount(canonical, env, false);
+      if (found) {
+        try {
+          await env.FX_STATE.put(ck, JSON.stringify(found), { expirationTtl: DISCOUNT_TTL });
+        } catch {
+          /* 캐시 실패는 치명적이지 않다 */
+        }
+      }
+    }
+    if (found && found.saleUsd > 0 && (parsed.listUsd === null || found.saleUsd <= parsed.listUsd)) {
+      parsed.saleUsd = found.saleUsd;
+      parsed.discountPct = found.discountPct !== undefined ? found.discountPct : parsed.discountPct;
+      parsed.usd = found.saleUsd; // 실제로 낼 돈으로 바꾼다
+    }
+  }
+
+  return { ok: true, url: canonical, host: u.hostname, rendered: parsed.saleUsd !== null, ...parsed };
 }
 
 function parseProduct(html, host) {
@@ -685,3 +723,66 @@ async function writeState(env, data, baseRev) {
 // 남은 공식 API는 11번가·쿠팡처럼 한 몰짜리라 '최저가'라고 부를 수가 없다.
 // 그래서 자동 조회를 걷어내고, 앱은 면세점가를 원화로 환산해 주는 데까지만 한다.
 // 비교는 다나와·네이버쇼핑 검색 링크로 넘긴다 — 키도 쿼터도 필요 없고 안 깨진다.
+
+// ---------------------------------------------------------------------------
+// 할인가 읽기 (Cloudflare Browser Rendering)
+// ---------------------------------------------------------------------------
+// 롯데 상품 페이지의 할인가는 서버 HTML에 없다. 자바스크립트가 그린 뒤에야
+// 생긴다 — 정적 HTML에는 <strong id="grdSrpDscntAmt">&nbsp;</strong> 뿐이고
+// meta에도 tma:originalPrice(정가)만 있다. 할인가를 주는 AJAX는 POST인데
+// Incapsula(WAF)가 앞에 있어 바깥에서는 호출이 막힌다.
+//
+// 그래서 진짜 브라우저로 페이지를 띄워 렌더가 끝난 뒤 그 자리의 글자를 읽는다.
+// **스크린샷 OCR이 아니다.** 렌더된 DOM에서 텍스트를 그대로 집어오므로
+// 숫자를 잘못 읽을 여지가 없다.
+//
+// 느리고(수 초) 사용량이 과금되므로 결과는 KV에 캐시한다. 할인가가 분 단위로
+// 바뀌지는 않는다.
+const RENDER_API = "https://api.cloudflare.com/client/v4/accounts/";
+const DISCOUNT_TTL = 60 * 60 * 6; // 6시간
+const RENDER_TIMEOUT_MS = 30000;
+
+function renderConfigured(env) {
+  return Boolean(env.CF_ACCOUNT_ID && env.CF_API_TOKEN);
+}
+
+function cacheKeyFor(url) {
+  return "product:" + url;
+}
+
+// 렌더해서 할인가·할인율을 읽는다. 실패하면 null — 정가만으로도 앱은 돈다.
+async function scrapeDiscount(url, env, debug) {
+  if (!renderConfigured(env)) return debug ? { skipped: "키 없음" } : null;
+  try {
+    const res = await fetch(RENDER_API + env.CF_ACCOUNT_ID + "/browser-rendering/scrape", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer " + env.CF_API_TOKEN,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        url,
+        elements: [{ selector: "#grdSrpDscntAmt" }, { selector: "#grdDscntRt" }],
+        // 할인가는 늦게 채워진다. 네트워크가 잠잠해질 때까지 기다려야 한다.
+        gotoOptions: { waitUntil: "networkidle0", timeout: RENDER_TIMEOUT_MS },
+      }),
+    });
+    const body = await res.json();
+    if (debug) return { status: res.status, body };
+    if (!body || body.success !== true || !Array.isArray(body.result)) return null;
+
+    const textOf = (sel) => {
+      const hit = body.result.find((r) => r.selector === sel);
+      const first = hit && Array.isArray(hit.results) ? hit.results[0] : null;
+      return first && typeof first.text === "string" ? first.text : "";
+    };
+
+    // "$164.8" 에서 숫자만. 통화기호나 공백이 섞여 와도 견디게 한다.
+    const saleUsd = toNum(pick(textOf("#grdSrpDscntAmt"), /([0-9][0-9,]*\.?[0-9]*)/));
+    const discountPct = toNum(pick(textOf("#grdDscntRt"), /([0-9]+(?:\.[0-9]+)?)/));
+    if (saleUsd === null) return null;
+    return { saleUsd, discountPct };
+  } catch (err) {
+    return debug ? { error: String(err && err.message ? err.message : err) } : null;
+  }
+}
