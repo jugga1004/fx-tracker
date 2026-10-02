@@ -64,7 +64,7 @@ export default {
             service: "fx-tracker 실시간 고시환율",
             keyConfigured: Boolean(env.KOREAEXIM_KEY),
             source: "한국수출입은행 오픈API (매매기준율) + 서울외국환중개 당일 직독",
-            rev: "shoplinks-1",
+            rev: "product-dbg-1",
           },
           200,
           origin
@@ -130,8 +130,10 @@ export default {
       }
 
       if (path === "/v1/product") {
-        const target = new URL(request.url).searchParams.get("url") || "";
-        return json(await fetchProduct(target), 200, origin);
+        const pu = new URL(request.url);
+        const target = pu.searchParams.get("url") || "";
+        const debug = pu.searchParams.get("debug") === "1";
+        return json(await fetchProduct(target, debug), 200, origin);
       }
 
       if (path === "/v1/live") {
@@ -267,18 +269,20 @@ async function fetchLiveRates(debug) {
 //
 // 아무 주소나 받아주면 이 Worker가 열린 프록시가 되어 남의 서버를 찌르는 데 쓰일 수 있다.
 // 그래서 면세점 도메인만 허용한다.
-const ALLOWED_HOSTS = [
-  "kor.lottedfs.com",
-  "www.lottedfs.com",
-  "www.shilladfs.com",
-  "m.shilladfs.com",
-  "www.ssgdfs.com",
-  "www.hddfs.com",
-];
+// 서브도메인까지 일일이 적어두면 모바일에서 공유한 주소(m. / mobile. 등)가
+// 막힌다. 실제로 "모바일에서 복사한 링크가 안 붙는다"는 신고가 있었다.
+// 그래서 등록 가능 도메인 기준으로 접미사 비교를 한다 — 범위는 여전히
+// 면세점 네 곳으로 닫혀 있어서 열린 프록시가 되지는 않는다.
+const ALLOWED_DOMAINS = ["lottedfs.com", "shilladfs.com", "ssgdfs.com", "hddfs.com"];
+
+function hostAllowed(hostname) {
+  const h = String(hostname || "").toLowerCase();
+  return ALLOWED_DOMAINS.some((d) => h === d || h.endsWith("." + d));
+}
 
 const PRODUCT_TTL = 60 * 30; // 가격은 자주 안 바뀐다. 30분 캐시.
 
-async function fetchProduct(rawUrl) {
+async function fetchProduct(rawUrl, debug) {
   let u;
   try {
     u = new URL(rawUrl);
@@ -288,7 +292,7 @@ async function fetchProduct(rawUrl) {
   if (u.protocol !== "https:" && u.protocol !== "http:") {
     return { ok: false, error: "http/https 주소만 됩니다." };
   }
-  if (!ALLOWED_HOSTS.includes(u.hostname)) {
+  if (!hostAllowed(u.hostname)) {
     return {
       ok: false,
       error: `지원하지 않는 사이트입니다(${u.hostname}). 현재는 롯데·신라·신세계·현대 면세점만 읽을 수 있습니다.`,
@@ -313,6 +317,18 @@ async function fetchProduct(rawUrl) {
   if (!res.ok) return { ok: false, error: `상품 페이지 응답 오류 (HTTP ${res.status})` };
 
   const html = await res.text();
+  if (debug) {
+    // 가격처럼 생긴 JSON 필드를 전부 보여준다. 어느 키가 '할인가'인지
+    // 추측하지 않고 실제 응답을 보고 고르기 위한 것이다.
+    const fields = {};
+    const re = /"([A-Za-z_][A-Za-z0-9_]*(?:[Pp]rc|[Pp]rice|[Aa]mt|[Dd]c)[A-Za-z0-9_]*)"\s*:\s*"?([0-9][0-9,]*\.?[0-9]*)"?/g;
+    let m;
+    while ((m = re.exec(html)) !== null) {
+      if (fields[m[1]] === undefined) fields[m[1]] = m[2];
+      if (Object.keys(fields).length > 60) break;
+    }
+    return { ok: true, debug: true, host: u.hostname, bytes: html.length, fields };
+  }
   const parsed = parseProduct(html, u.hostname);
   if (!parsed.usd && !parsed.name) {
     return { ok: false, error: "이 페이지에서 상품 정보를 찾지 못했습니다. 상품 상세 페이지 주소가 맞는지 확인해주세요." };
