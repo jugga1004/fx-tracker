@@ -64,7 +64,7 @@ export default {
             service: "fx-tracker 실시간 고시환율",
             keyConfigured: Boolean(env.KOREAEXIM_KEY),
             source: "한국수출입은행 오픈API (매매기준율) + 서울외국환중개 당일 직독",
-            rev: "mobile-3",
+            rev: "mobile-4",
           },
           200,
           origin
@@ -368,7 +368,7 @@ async function fetchProduct(rawUrl, debug) {
       const at = html.indexOf(k);
       marks[k] = at < 0 ? null : html.slice(Math.max(0, at - 80), at + 120).replace(/\s+/g, " ");
     });
-    const areaRaw = pick(html, /<div class="detail_price_area">([sS]{0,1500}?)</ul>/i);
+    const areaRaw = pick(html, /<div class="detail_price_area">([\s\S]{0,1500}?)<\/ul>/i);
     return {
       ok: true,
       debug: true,
@@ -377,7 +377,7 @@ async function fetchProduct(rawUrl, debug) {
       fields,
       marks,
       priceAreaFound: areaRaw !== null,
-      priceArea: areaRaw ? decodeEntities(areaRaw).replace(/s+/g, " ").slice(0, 500) : null,
+      priceArea: areaRaw ? decodeEntities(areaRaw).replace(/\s+/g, " ").slice(0, 500) : null,
     };
 
   }
