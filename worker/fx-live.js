@@ -64,7 +64,7 @@ export default {
             service: "fx-tracker 실시간 고시환율",
             keyConfigured: Boolean(env.KOREAEXIM_KEY),
             source: "한국수출입은행 오픈API (매매기준율) + 서울외국환중개 당일 직독",
-            rev: "price-2",
+            rev: "canon-1",
           },
           200,
           origin
@@ -280,6 +280,27 @@ function hostAllowed(hostname) {
   return ALLOWED_DOMAINS.some((d) => h === d || h.endsWith("." + d));
 }
 
+// 모바일에서 공유한 주소는 호스트도 경로도 다르다. m.lottedfs.com은 허용은
+// 되지만 마크업이 달라 파싱이 안 됐다.
+//
+// 주소를 통째로 해석하려 들지 않고 상품번호만 뽑아 표준 주소로 바꿔 끼운다.
+// 어느 서브도메인에서 복사했든, 파라미터 순서가 어떻든 같은 자리로 모인다.
+function canonicalUrl(u) {
+  const h = u.hostname.toLowerCase();
+  if (h === "lottedfs.com" || h.endsWith(".lottedfs.com")) {
+    const prdNo = u.searchParams.get("prdNo");
+    if (prdNo) {
+      const opt = u.searchParams.get("prdOptNo") || "";
+      return new URL(
+        "https://kor.lottedfs.com/kr/product/productDetail?prdNo=" +
+          encodeURIComponent(prdNo) +
+          (opt ? "&prdOptNo=" + encodeURIComponent(opt) : "")
+      );
+    }
+  }
+  return u;
+}
+
 const PRODUCT_TTL = 60 * 30; // 가격은 자주 안 바뀐다. 30분 캐시.
 
 async function fetchProduct(rawUrl, debug) {
@@ -298,6 +319,9 @@ async function fetchProduct(rawUrl, debug) {
       error: `지원하지 않는 사이트입니다(${u.hostname}). 현재는 롯데·신라·신세계·현대 면세점만 읽을 수 있습니다.`,
     };
   }
+
+  // 모바일 주소는 여기서 표준형으로 바뀐다.
+  u = canonicalUrl(u);
 
   let res;
   try {
