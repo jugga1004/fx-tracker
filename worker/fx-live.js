@@ -64,7 +64,7 @@ export default {
             service: "fx-tracker 실시간 고시환율",
             keyConfigured: Boolean(env.KOREAEXIM_KEY),
             source: "한국수출입은행 오픈API (매매기준율) + 서울외국환중개 당일 직독",
-            rev: "mobile-2",
+            rev: "mobile-3",
           },
           200,
           origin
@@ -336,8 +336,11 @@ async function fetchProduct(rawUrl, debug) {
     res = await fetch(u.toString(), {
       // 봇으로 차단당하지 않게 일반 브라우저처럼 요청한다.
       headers: {
-        "user-agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36",
+        // 모바일 호스트에 데스크톱 UA로 가면 다른 화면이 온다. 우리가 원하는
+        // 서버 렌더링 가격표는 모바일 화면에만 있으므로 UA도 모바일로 맞춘다.
+        "user-agent": /^m\./.test(u.hostname)
+          ? "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
+          : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36",
         accept: "text/html,application/xhtml+xml",
         "accept-language": "ko-KR,ko;q=0.9",
       },
@@ -365,7 +368,17 @@ async function fetchProduct(rawUrl, debug) {
       const at = html.indexOf(k);
       marks[k] = at < 0 ? null : html.slice(Math.max(0, at - 80), at + 120).replace(/\s+/g, " ");
     });
-    return { ok: true, debug: true, host: u.hostname, bytes: html.length, fields, marks };
+    const areaRaw = pick(html, /<div class="detail_price_area">([sS]{0,1500}?)</ul>/i);
+    return {
+      ok: true,
+      debug: true,
+      host: u.hostname,
+      bytes: html.length,
+      fields,
+      marks,
+      priceAreaFound: areaRaw !== null,
+      priceArea: areaRaw ? decodeEntities(areaRaw).replace(/s+/g, " ").slice(0, 500) : null,
+    };
 
   }
   const parsed = parseProduct(html, u.hostname);
