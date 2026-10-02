@@ -928,7 +928,16 @@
             if (!p.usd) {
               box.textContent = "상품명은 가져왔지만 가격을 못 찾았습니다. 가격은 직접 입력해주세요.";
               box.hidden = false;
+              return;
             }
+            // 가져온 건 정가다. 할인가는 페이지에서 자바스크립트가 그린 뒤에야
+            // 생겨서 서버에서는 읽을 수가 없다. 그 사실을 숨기면 할인 중인
+            // 상품이 비싸게 기록되고, 비교가 통째로 어긋난다.
+            $("dfItemPreview").innerHTML =
+              '<span class="badge badge--warn">정가</span> $' +
+              num(p.usd, 2) +
+              " 를 넣었습니다. <strong>할인 중이면 할인가로 고쳐주세요.</strong>" +
+              " 등록 뒤에도 목록에서 바로 바꿀 수 있습니다.";
           },
           function (err) {
             $("dfItemPreview").textContent = "";
@@ -936,6 +945,17 @@
             box.hidden = false;
           }
         );
+    });
+
+    $("dfItems").addEventListener("change", function (e) {
+      var input = e.target.closest("input[data-usd]");
+      if (!input) return;
+      try {
+        Portfolio.updateItemUsd(input.dataset.usd, input.value);
+        renderDutyFree();
+      } catch (err) {
+        alert(err.message);
+      }
     });
 
     $("dfItems").addEventListener("click", function (e) {
@@ -1351,9 +1371,14 @@
             ? '<a href="' + esc(it.url) + '" target="_blank" rel="noopener noreferrer">' + label + " ↗</a>"
             : label) +
           "</th>" +
-          "<td>$" +
-          num(it.usd, 2) +
-          "</td>" +
+          // 가격은 그 자리에서 고친다. 자동 채움이 정가를 가져오기 때문에
+          // 할인 중인 상품은 사용자가 직접 할인가로 바꿔야 비교가 맞는다.
+          '<td><span class="usd-edit">$<input type="number" step="0.01" min="0" data-usd="' +
+          esc(it.id) +
+          '" value="' +
+          num(it.usd, 2).replace(/,/g, "") +
+          '" aria-label="면세점 달러가" /></span></td>' +
+
           '<td class="muted">' +
           (isFinite(yesterdayKrw) ? won(yesterdayKrw) : "—") +
           "</td>" +

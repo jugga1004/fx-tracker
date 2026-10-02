@@ -473,7 +473,22 @@
     return s.items;
   }
 
+  // 등록한 뒤에도 가격을 고칠 수 있어야 한다. 자동 채움은 면세점 '정가'를
+  // 가져오는데, 할인 중이면 실제로 낼 돈은 그보다 싸다. 할인가는 페이지에서
+  // 자바스크립트가 그린 뒤에야 생기는 값이라 서버에서는 읽을 수가 없다.
+  function updateItemUsd(id, usd) {
+    var v = Number(usd);
+    if (!(v > 0)) throw new Error("가격은 0보다 커야 합니다.");
+    var s = load();
+    s.items.forEach(function (it) {
+      if (it.id === id) it.usd = v;
+    });
+    save();
+    return s.items;
+  }
+
   function removeItem(id) {
+
 
     var s = load();
     s.items = s.items.filter(function (it) {
@@ -700,6 +715,7 @@
     addItem: addItem,
     removeItem: removeItem,
     listItems: listItems,
+    updateItemUsd: updateItemUsd,
     addRoute: addRoute,
     removeRoute: removeRoute,
     addObservation: addObservation,

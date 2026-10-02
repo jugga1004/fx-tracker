@@ -802,3 +802,10 @@ button.danger {
   white-space: nowrap;
   margin: 2px 0;
 }
+
+/* 관심 상품의 달러가는 그 자리에서 고친다. 표 안이라 좁게 잡는다. */
+.usd-edit input {
+  width: 5.5em;
+  padding: 2px 4px;
+  font-size: 0.85rem;
+}
