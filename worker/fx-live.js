@@ -64,7 +64,7 @@ export default {
             service: "fx-tracker 실시간 고시환율",
             keyConfigured: Boolean(env.KOREAEXIM_KEY),
             source: "한국수출입은행 오픈API (매매기준율) + 서울외국환중개 당일 직독",
-            rev: "product-dbg-1",
+            rev: "price-2",
           },
           200,
           origin
@@ -327,7 +327,14 @@ async function fetchProduct(rawUrl, debug) {
       if (fields[m[1]] === undefined) fields[m[1]] = m[2];
       if (Object.keys(fields).length > 60) break;
     }
-    return { ok: true, debug: true, host: u.hostname, bytes: html.length, fields };
+    // 할인가는 JSON이 아니라 마크업에 들어 있다. 그 부분도 같이 보여준다.
+    const marks = {};
+    ["grdSrpDscntAmt", "grdDscntRt", "grdSrpAmt", "DscntAmt"].forEach((k) => {
+      const at = html.indexOf(k);
+      marks[k] = at < 0 ? null : html.slice(Math.max(0, at - 80), at + 120).replace(/\s+/g, " ");
+    });
+    return { ok: true, debug: true, host: u.hostname, bytes: html.length, fields, marks };
+
   }
   const parsed = parseProduct(html, u.hostname);
   if (!parsed.usd && !parsed.name) {
@@ -349,11 +356,30 @@ function parseProduct(html, host) {
   const brand = decodeEntities(pick(html, /"brndNm"\s*:\s*"([^"]+)"/) || "").trim();
 
   // 달러 표시가. 롯데는 saleUntPrc 가 달러, saleUntPrcGlbl 이 원화 환산가다.
-  let usd = toNum(pick(html, /"saleUntPrc"\s*:\s*"?([0-9][0-9,]*\.?[0-9]*)"?/));
-  if (usd === null) usd = toNum(pick(html, /"dutyFreePrice"\s*:\s*"?([0-9][0-9,]*\.?[0-9]*)"?/));
-  if (usd === null) usd = toNum(pick(html, /"salePrice"\s*:\s*"?([0-9][0-9,]*\.?[0-9]*)"?/));
+  // 정가. 롯데는 saleUntPrc 가 달러, saleUntPrcGlbl 이 원화 환산가다.
+  let listUsd = toNum(pick(html, /"saleUntPrc"\s*:\s*"?([0-9][0-9,]*\.?[0-9]*)"?/));
+  if (listUsd === null) listUsd = toNum(pick(html, /"dutyFreePrice"\s*:\s*"?([0-9][0-9,]*\.?[0-9]*)"?/));
+  if (listUsd === null) listUsd = toNum(pick(html, /"salePrice"\s*:\s*"?([0-9][0-9,]*\.?[0-9]*)"?/));
 
-  return { name, brand, usd, parsedFrom: host };
+  // 할인가. 여기가 실제로 내는 돈이라 비교에 써야 할 값이다.
+  // JSON이 아니라 마크업에 들어 있다 — 롯데는 id="grdSrpDscntAmt"에 "$164.8" 식으로 박혀 온다.
+  // 속성 순서가 바뀔 수 있어 id만 걸고 그 뒤의 첫 숫자를 집는다.
+  let saleUsd = toNum(
+    pick(html, /id=["']grdSrpDscntAmt["'][^>]*>\s*\$?\s*([0-9][0-9,]*\.?[0-9]*)/i)
+  );
+  // 다른 면세점은 id가 다를 수 있다. 'DscntAmt'가 들어간 id면 일단 받아본다.
+  if (saleUsd === null) {
+    saleUsd = toNum(pick(html, /id=["'][A-Za-z]*DscntAmt[A-Za-z]*["'][^>]*>\s*\$?\s*([0-9][0-9,]*\.?[0-9]*)/i));
+  }
+  const discountPct = toNum(pick(html, /id=["']grdDscntRt["'][^>]*>\s*([0-9]+(?:\.[0-9]+)?)\s*%/i));
+
+  // 할인가가 정가보다 크면 뭔가 잘못 집은 것이다. 그럴 땐 안 쓴다.
+  if (saleUsd !== null && listUsd !== null && saleUsd > listUsd) saleUsd = null;
+
+  // usd는 '실제로 낼 달러'다. 할인가가 있으면 그쪽.
+  const usd = saleUsd !== null ? saleUsd : listUsd;
+
+  return { name, brand, usd, listUsd, saleUsd, discountPct, parsedFrom: host };
 }
 
 function pick(s, re) {
