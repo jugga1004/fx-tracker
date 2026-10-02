@@ -930,14 +930,23 @@
               box.hidden = false;
               return;
             }
-            // 가져온 건 정가다. 할인가는 페이지에서 자바스크립트가 그린 뒤에야
-            // 생겨서 서버에서는 읽을 수가 없다. 그 사실을 숨기면 할인 중인
-            // 상품이 비싸게 기록되고, 비교가 통째로 어긋난다.
-            $("dfItemPreview").innerHTML =
-              '<span class="badge badge--warn">정가</span> $' +
-              num(p.usd, 2) +
-              " 를 넣었습니다. <strong>할인 중이면 할인가로 고쳐주세요.</strong>" +
-              " 등록 뒤에도 목록에서 바로 바꿀 수 있습니다.";
+            // 할인 중이면 할인가가 들어온다(모바일 페이지가 서버에서 그려준다).
+            // 할인이 없는 상품은 정가뿐이라 그 사실을 밝힌다 — 숨기면 할인 중인
+            // 물건이 비싸게 기록되고 비교가 통째로 어긋난다.
+            if (p.saleUsd) {
+              $("dfItemPreview").innerHTML =
+                '<span class="badge">할인가</span> $' +
+                num(p.saleUsd, 2) +
+                ' <span class="muted">(정가 $' +
+                num(p.listUsd || p.usd, 2) +
+                (p.discountPct ? " · " + num(p.discountPct, 0) + "% 할인" : "") +
+                ")</span>";
+            } else {
+              $("dfItemPreview").innerHTML =
+                '<span class="badge badge--warn">정가</span> $' +
+                num(p.usd, 2) +
+                " — 할인 표시가 없는 상품입니다. 다르면 목록에서 바로 고칠 수 있습니다.";
+            }
           },
           function (err) {
             $("dfItemPreview").textContent = "";
@@ -959,10 +968,21 @@
     });
 
     $("dfItems").addEventListener("click", function (e) {
+      var ref = e.target.closest("button[data-refresh]");
+      if (ref) {
+        refreshItemPrice(ref.dataset.refresh, ref);
+        return;
+      }
       var btn = e.target.closest("button[data-del]");
       if (!btn) return;
       Portfolio.removeItem(btn.dataset.del);
       renderDutyFree();
+    });
+
+    $("dfItemsRefreshAll").addEventListener("click", function () {
+      Portfolio.listItems().forEach(function (it) {
+        if (it.url) refreshItemPrice(it.id, null);
+      });
     });
 
     // 결제 수단 토글과 한도·세율 입력은 카드를 다시 그릴 때마다 새로 생긴다.
@@ -1336,7 +1356,35 @@
   // ---------------------------------------------------------------------
   // 관심 상품 — 등록한 달러 표시가의 오늘/내일 원화가
   // ---------------------------------------------------------------------
+  // 저장된 링크로 가격을 다시 집어온다. 할인은 수시로 바뀌는데 사람이 매번
+  // 고쳐 넣게 하면 결국 아무도 안 고치고, 비교가 조용히 틀어진다.
+  function refreshItemPrice(id, btn) {
+    var it = Portfolio.listItems().filter(function (x) {
+      return x.id === id;
+    })[0];
+    if (!it || !it.url) return;
+    var box = $("dfItemError");
+    box.hidden = true;
+    if (btn) btn.textContent = "가져오는 중...";
+    Promise.resolve()
+      .then(function () {
+        return FxDomestic.fetchProduct(it.url);
+      })
+      .then(
+        function (p) {
+          if (p.usd) Portfolio.updateItemUsd(id, p.usd);
+          renderDutyFree();
+        },
+        function (err) {
+          if (btn) btn.textContent = "새로고침";
+          box.textContent = (it.name || "상품") + ": " + err.message;
+          box.hidden = false;
+        }
+      );
+  }
+
   function renderDfItems() {
+
     var box = $("dfItems");
     if (!box) return;
 
@@ -1393,7 +1441,13 @@
           '">' +
           (isFinite(d) ? signedWon(d) : "—") +
           "</td>" +
-          '<td><button type="button" class="link-btn" data-del="' +
+          "<td>" +
+          // 링크가 있는 상품만 다시 가져올 수 있다. 할인은 수시로 바뀌므로
+          // 등록할 때 한 번 집어온 값은 금방 낡는다.
+          (it.url
+            ? '<button type="button" class="link-btn" data-refresh="' + esc(it.id) + '">새로고침</button> · '
+            : "") +
+          '<button type="button" class="link-btn" data-del="' +
           esc(it.id) +
           '">삭제</button></td>' +
           "</tr>"
